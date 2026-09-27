@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if command -v foreman >/dev/null 2>&1; then
+  exec foreman start -f Procfile.dev "$@"
+fi
+printf '%s\n' "foreman is not installed; starting Rails only."
+exec bin/rails server "$@"

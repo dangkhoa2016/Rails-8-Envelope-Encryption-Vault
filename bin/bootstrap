@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+required_ruby="$(cat .ruby-version)"
+if ! command -v ruby >/dev/null 2>&1; then
+  echo "ERROR: Ruby ${required_ruby} is required. Install/activate it first (mise is recommended)." >&2
+  exit 1
+fi
+
+actual_ruby="$(ruby -e 'print RUBY_VERSION')"
+if [ "$actual_ruby" != "$required_ruby" ]; then
+  echo "ERROR: Ruby ${required_ruby} is required, current Ruby is ${actual_ruby}." >&2
+  echo "With mise: mise use ruby@${required_ruby}" >&2
+  exit 1
+fi
+
+if ! command -v bundle >/dev/null 2>&1; then
+  gem install bundler
+fi
+
+bundle install
+
+mkdir -p .local/keks log tmp storage
+chmod 700 .local/keks
+
+export VAULT_KEY_PROVIDER="${VAULT_KEY_PROVIDER:-local_file}"
+export VAULT_ACTIVE_KEK_ID="${VAULT_ACTIVE_KEK_ID:-kek-dev-01}"
+export VAULT_KEK_DIR="${VAULT_KEK_DIR:-$ROOT/.local/keks}"
+
+if [ ! -f "$VAULT_KEK_DIR/$VAULT_ACTIVE_KEK_ID.key" ]; then
+  bin/rails vault:keys:generate ID="$VAULT_ACTIVE_KEK_ID" DIR="$VAULT_KEK_DIR"
+fi
+
+bin/rails db:prepare
+
+echo
+printf '%s\n' "Bootstrap complete."
+printf '%s\n' "Run: VAULT_KEK_DIR='$VAULT_KEK_DIR' VAULT_ACTIVE_KEK_ID='$VAULT_ACTIVE_KEK_ID' bin/dev"
