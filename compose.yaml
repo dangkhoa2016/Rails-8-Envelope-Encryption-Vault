@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: vault
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ruby_envelope_vault_production
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vault -d ruby_envelope_vault_production"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  web:
+    build:
+      context: .
+    environment:
+      RAILS_ENV: production
+      DATABASE_URL: postgresql://vault:${POSTGRES_PASSWORD}@postgres:5432/ruby_envelope_vault_production
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?set SECRET_KEY_BASE}
+      APP_HOSTS: ${APP_HOSTS:-localhost,127.0.0.1}
+      VAULT_KEY_PROVIDER: local_file
+      VAULT_ACTIVE_KEK_ID: ${VAULT_ACTIVE_KEK_ID:?set VAULT_ACTIVE_KEK_ID}
+      VAULT_KEK_DIR: /run/secrets/ruby-envelope-vault/keks
+      ALLOW_SIGNUPS: ${ALLOW_SIGNUPS:-false}
+      DEMO_MODE: ${DEMO_MODE:-true}
+      REQUIRE_MFA: ${REQUIRE_MFA:-false}
+      FORCE_SSL: ${FORCE_SSL:-false}
+      RAILS_LOG_TO_STDOUT: "true"
+    volumes:
+      - ${VAULT_KEK_HOST_DIR:?set VAULT_KEK_HOST_DIR}:/run/secrets/ruby-envelope-vault/keks:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
