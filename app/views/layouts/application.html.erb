@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Ruby Envelope Vault</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="referrer" content="same-origin">
+    <meta name="turbo-cache-control" content="no-cache">
+    <%= csrf_meta_tags %>
+    <%= csp_meta_tag %>
+    <%= stylesheet_link_tag "tailwind", "data-turbo-track": "reload" %>
+    <%= javascript_importmap_tags %>
+  </head>
+  <body class="min-h-screen bg-slate-950 text-slate-100 antialiased selection:bg-indigo-400/30">
+    <% if ActiveModel::Type::Boolean.new.cast(ENV.fetch("DEMO_MODE", "false")) %>
+      <div class="border-b border-amber-300/20 bg-amber-300/10 px-4 py-2 text-center text-xs font-semibold tracking-wide text-amber-100" role="status" data-demo-banner>Demo environment — synthetic data only. Do not enter real secrets.</div>
+    <% end %>
+    <a href="#main-content" class="sr-only z-[100] rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:outline-none focus:ring-2 focus:ring-indigo-300">Skip to content</a>
+    <% if Current.user %>
+      <div class="min-h-screen lg:grid lg:grid-cols-[260px_minmax(0,1fr)]" data-controller="mobile-nav">
+        <aside class="border-b border-white/10 bg-slate-950/95 lg:sticky lg:top-0 lg:h-screen lg:border-b-0 lg:border-r">
+          <div class="flex h-full flex-col">
+            <div class="flex items-center justify-between px-5 py-5">
+              <%= link_to root_path, class: "flex items-center gap-3" do %>
+                <span class="grid h-10 w-10 place-items-center rounded-2xl bg-gradient-to-br from-indigo-400 to-violet-600 shadow-lg shadow-indigo-950/50">
+                  <svg class="h-5 w-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M7.5 10.5V8.25a4.5 4.5 0 0 1 9 0v2.25m-10.5 0h12v9h-12v-9Z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </span>
+                <span><span class="block text-sm font-semibold tracking-tight text-white">Envelope Vault</span><span class="block text-xs text-slate-500">Private by design</span></span>
+              <% end %>
+            </div>
+
+            <nav id="primary-navigation" class="hidden grid-cols-3 gap-2 px-4 pb-4 text-sm lg:block lg:space-y-1 lg:pb-0" aria-label="Primary navigation" data-mobile-nav-target="panel">
+              <% [
+                ["Dashboard", root_path, "M3.75 3.75h6.75v6.75H3.75V3.75Zm9.75 0h6.75v6.75H13.5V3.75ZM3.75 13.5h6.75v6.75H3.75V13.5Zm9.75 0h6.75v6.75H13.5V13.5Z"],
+                ["Vault", vault_items_path, "M7.5 10.5V8.25a4.5 4.5 0 0 1 9 0v2.25m-10.5 0h12v9h-12v-9Z"],
+                ["Audit", audit_events_path, "M12 6v6l3.75 2.25M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"]
+              ].each do |label, path, icon| %>
+                <% active = request.path == path || (label == "Vault" && request.path.start_with?("/vault_items")) %>
+                <%= link_to path,
+                            class: "flex items-center gap-3 rounded-xl px-3 py-2.5 font-medium transition #{active ? "bg-white/10 text-white" : "text-slate-400 hover:bg-white/5 hover:text-white"}",
+                            aria: (active ? { current: "page" } : {}) do %>
+                  <svg class="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="<%= icon %>" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <span><%= label %></span>
+                <% end %>
+              <% end %>
+              <div class="col-span-3 mt-2 border-t border-white/10 pt-3">
+                <p class="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">Security</p>
+                <%= link_to "Security", settings_security_path, class: "block rounded-xl px-3 py-2 text-slate-400 hover:bg-white/5 hover:text-white" %>
+                <%= link_to "MFA", settings_mfa_path, class: "block rounded-xl px-3 py-2 text-slate-400 hover:bg-white/5 hover:text-white" %>
+                <%= link_to "Sessions", settings_sessions_path, class: "block rounded-xl px-3 py-2 text-slate-400 hover:bg-white/5 hover:text-white" %>
+              </div>
+            </nav>
+
+            <div class="mt-auto hidden border-t border-white/10 p-4 lg:block">
+              <div class="rounded-2xl bg-white/[0.04] p-3">
+                <p class="truncate text-sm font-medium text-slate-200"><%= Current.user.email_address %></p>
+                <p class="mt-1 text-xs text-slate-500">Encrypted vault account</p>
+                <%= button_to "Sign out", session_path, method: :delete, class: "mt-3 w-full rounded-xl border border-white/10 px-3 py-2 text-sm text-slate-300 hover:bg-white/5 hover:text-white" %>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <div class="min-w-0">
+          <header class="sticky top-0 z-30 border-b border-white/10 bg-slate-950/80 backdrop-blur-xl">
+            <div class="flex items-center justify-between gap-4 px-5 py-3.5 lg:px-8">
+              <div class="flex items-center gap-3">
+                <button type="button" class="grid h-10 w-10 place-items-center rounded-xl border border-white/10 text-slate-400 hover:bg-white/5 hover:text-white lg:hidden" aria-label="Toggle navigation" aria-controls="primary-navigation" aria-expanded="false" data-mobile-nav-target="button" data-action="mobile-nav#toggle">
+                  <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round"/></svg>
+                </button>
+                <p class="hidden text-xs font-medium uppercase tracking-[0.14em] text-slate-600 sm:block">Encrypted workspace</p>
+              </div>
+              <div class="flex items-center gap-2">
+                <%= link_to new_vault_item_path, class: "inline-flex min-h-10 min-w-10 cursor-pointer items-center justify-center gap-2 rounded-xl bg-indigo-500 px-3.5 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-950/40 transition hover:bg-indigo-400 focus-visible:ring-2 focus-visible:ring-indigo-300" do %>
+                  <span class="text-lg leading-none">+</span><span class="hidden sm:inline">New item</span>
+                <% end %>
+                <%= button_to session_path, method: :delete, class: "grid h-10 w-10 place-items-center rounded-xl border border-white/10 text-slate-400 hover:bg-white/5 hover:text-white lg:hidden", aria: { label: "Sign out" }, title: "Sign out" do %>
+                  <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M14.25 8.25 18 12m0 0-3.75 3.75M18 12H8.25m3-7.5H6.75A2.25 2.25 0 0 0 4.5 6.75v10.5a2.25 2.25 0 0 0 2.25 2.25h4.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <% end %>
+              </div>
+            </div>
+          </header>
+
+          <main id="main-content" tabindex="-1" class="mx-auto w-full max-w-7xl px-5 py-7 lg:px-8 lg:py-9">
+            <% if notice %>
+              <div class="fixed right-5 top-20 z-50 flex max-w-md items-start gap-3 rounded-2xl border border-emerald-400/20 bg-slate-900/95 px-4 py-3 text-sm text-emerald-100 shadow-2xl shadow-black/30 backdrop-blur transition duration-200" role="status" aria-live="polite" data-controller="flash">
+                <span class="mt-0.5">✓</span><span class="min-w-0 flex-1"><%= notice %></span>
+                <button type="button" class="text-slate-500 hover:text-white" aria-label="Dismiss notification" data-action="flash#dismiss">×</button>
+              </div>
+            <% end %>
+            <% if alert %>
+              <div class="fixed right-5 top-20 z-50 flex max-w-md items-start gap-3 rounded-2xl border border-rose-400/20 bg-slate-900/95 px-4 py-3 text-sm text-rose-100 shadow-2xl shadow-black/30 backdrop-blur transition duration-200" role="alert" aria-live="assertive" data-controller="flash">
+                <span class="mt-0.5">!</span><span class="min-w-0 flex-1"><%= alert %></span>
+                <button type="button" class="text-slate-500 hover:text-white" aria-label="Dismiss notification" data-action="flash#dismiss">×</button>
+              </div>
+            <% end %>
+            <%= yield %>
+          </main>
+        </div>
+      </div>
+    <% else %>
+      <main id="main-content" tabindex="-1" class="mx-auto flex min-h-screen max-w-6xl items-center justify-center px-5 py-10">
+        <div class="w-full">
+          <% if notice %><div class="mx-auto mb-5 max-w-lg rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-3 transition duration-200" role="status" aria-live="polite" data-controller="flash"><%= notice %></div><% end %>
+          <% if alert %><div class="mx-auto mb-5 max-w-lg rounded-2xl border border-rose-400/20 bg-rose-400/10 p-3 transition duration-200" role="alert" aria-live="assertive" data-controller="flash"><%= alert %></div><% end %>
+          <%= yield %>
+        </div>
+      </main>
+    <% end %>
+  </body>
+</html>

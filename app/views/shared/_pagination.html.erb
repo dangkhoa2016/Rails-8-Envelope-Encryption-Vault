@@ -1,0 +1,20 @@
+<nav class="mt-5 flex flex-wrap items-center justify-between gap-3" aria-label="<%= label %>">
+  <p class="text-sm text-slate-400">Page <%= pagy.page %> of <%= pagy.last %></p>
+  <div class="flex flex-wrap items-center gap-1.5">
+    <% if pagy.previous %>
+      <%= link_to "Previous", pagy.page_url(:previous), rel: "prev", class: "rounded-xl border border-white/10 px-3 py-2 text-sm text-slate-200 transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-indigo-300" %>
+    <% end %>
+    <% pagy.send(:series).each do |entry| %>
+      <% if entry.is_a?(Integer) %>
+        <%= link_to entry, pagy.page_url(entry), aria: { label: "Page #{entry}" }, class: "rounded-xl border border-white/10 px-3 py-2 text-sm text-slate-300 transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-indigo-300" %>
+      <% elsif entry.is_a?(String) %>
+        <span aria-current="page" class="rounded-xl border border-indigo-400/40 bg-indigo-400/15 px-3 py-2 text-sm font-semibold text-indigo-100"><%= entry %></span>
+      <% else %>
+        <span aria-hidden="true" class="px-1 text-sm text-slate-500">…</span>
+      <% end %>
+    <% end %>
+    <% if pagy.next %>
+      <%= link_to "Next", pagy.page_url(:next), rel: "next", class: "rounded-xl border border-white/10 px-3 py-2 text-sm text-slate-200 transition hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-indigo-300" %>
+    <% end %>
+  </div>
+</nav>
