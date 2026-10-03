@@ -1,0 +1,12 @@
+<nav class="mb-6 flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-white/[0.025] p-2" aria-label="Security settings">
+  <% [
+    ["Password", settings_security_path, request.path == settings_security_path],
+    ["MFA", settings_mfa_path, request.path.start_with?("/settings/mfa")],
+    ["Sessions", settings_sessions_path, request.path.start_with?("/settings/sessions")]
+  ].each do |label, path, active| %>
+    <%= link_to label,
+                path,
+                class: "inline-flex min-h-10 items-center justify-center rounded-xl px-3.5 py-2 text-sm font-medium transition #{active ? "bg-white/10 text-white" : "text-slate-400 hover:bg-white/5 hover:text-white"}",
+                aria: (active ? { current: "page" } : {}) %>
+  <% end %>
+</nav>

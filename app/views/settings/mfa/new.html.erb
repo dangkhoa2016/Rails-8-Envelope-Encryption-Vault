@@ -1,0 +1,24 @@
+<div class="mx-auto max-w-3xl">
+  <%= render "settings/navigation" %>
+  <p class="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-300">MFA setup</p>
+  <h1 class="mt-2 text-3xl font-semibold tracking-tight">Set up TOTP MFA</h1>
+  <div class="mt-6 grid gap-5 lg:grid-cols-2">
+    <section class="rounded-2xl border border-white/10 bg-white/[0.025] p-5">
+      <span class="grid h-8 w-8 place-items-center rounded-full bg-indigo-400/10 text-sm font-semibold text-indigo-300">1</span>
+      <h2 class="mt-4 font-semibold">Add the secret</h2>
+      <p class="mt-2 text-sm leading-6 text-slate-400">Add the encrypted pending TOTP secret to your authenticator. It expires at <%= @setup_expires_at %>.</p>
+      <div class="mt-4 rounded-xl border border-white/10 bg-slate-950 p-4 font-mono text-sm break-all" data-secret-value><%= @secret %></div>
+      <details class="mt-4 text-sm text-slate-400"><summary class="cursor-pointer">Provisioning URI</summary><div class="mt-2 break-all rounded-xl bg-slate-950 p-3 font-mono" data-secret-value><%= @uri %></div></details>
+    </section>
+    <section class="rounded-2xl border border-white/10 bg-white/[0.025] p-5">
+      <span class="grid h-8 w-8 place-items-center rounded-full bg-indigo-400/10 text-sm font-semibold text-indigo-300">2</span>
+      <h2 class="mt-4 font-semibold">Verify the current code</h2>
+      <p class="mt-2 text-sm leading-6 text-slate-400">Enter the current six-digit code to activate MFA and generate one-time recovery codes.</p>
+      <%= form_with url: settings_mfa_path, class: "mt-5 space-y-4", data: { turbo: false } do |f| %>
+        <%= f.label :token, "6-digit code", class: "text-sm text-slate-300" %>
+        <%= f.text_field :token, required: true, inputmode: "numeric", autocomplete: "one-time-code", class: "mt-1 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3 font-mono tracking-widest" %>
+        <%= f.submit "Enable MFA", class: "w-full rounded-xl bg-indigo-500 px-4 py-3 font-semibold" %>
+      <% end %>
+    </section>
+  </div>
+</div>

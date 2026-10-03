@@ -1,0 +1,32 @@
+<div class="mx-auto max-w-3xl">
+  <%= render "settings/navigation" %>
+  <p class="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-300">Security</p>
+  <h1 class="mt-2 text-3xl font-semibold tracking-tight">Multi-factor authentication</h1>
+  <% if @enabled %>
+    <div class="mt-5 rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-4"><p class="font-medium text-emerald-200">MFA is enabled.</p><p class="mt-1 text-sm text-emerald-100/70">Unused recovery codes: <%= @remaining_codes %>.</p></div>
+    <div class="mt-6 grid gap-5 lg:grid-cols-2">
+      <section class="rounded-2xl border border-white/10 bg-white/[0.025] p-5">
+        <h2 class="font-semibold">Recovery codes</h2><p class="mt-2 text-sm leading-6 text-slate-400">Regenerating invalidates every previously unused recovery code.</p>
+        <%= form_with url: regenerate_recovery_codes_settings_mfa_path, method: :post, class: "mt-4 space-y-3", data: { turbo: false } do |f| %>
+          <%= f.label :token, "Current authenticator or recovery code", class: "text-sm text-slate-300" %>
+          <%= f.text_field :token, required: true, autocomplete: "one-time-code", inputmode: "numeric", class: "mt-1 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3" %>
+          <%= f.submit "Regenerate recovery codes", class: "rounded-xl border border-amber-400/20 px-4 py-2.5 text-sm text-amber-300 hover:bg-amber-400/10" %>
+        <% end %>
+      </section>
+      <section class="rounded-2xl border border-rose-400/20 bg-rose-400/[0.04] p-5">
+        <h2 class="font-semibold text-rose-200">Disable MFA</h2><p class="mt-2 text-sm leading-6 text-slate-400">Removes the authenticator secret and recovery codes, and revokes every other active session.</p>
+        <%= form_with url: settings_mfa_path, method: :delete, class: "mt-4 space-y-3", data: { turbo_confirm: "Disable MFA and remove all recovery codes?" } do |f| %>
+          <%= f.label :token, "Current authenticator or recovery code", class: "text-sm text-slate-300" %>
+          <%= f.text_field :token, required: true, autocomplete: "one-time-code", inputmode: "numeric", class: "mt-1 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3" %>
+          <%= f.submit "Disable MFA", class: "rounded-xl border border-rose-400/30 px-4 py-2.5 text-sm text-rose-300 hover:bg-rose-400/10" %>
+        <% end %>
+      </section>
+    </div>
+  <% else %>
+    <div class="mt-6 rounded-3xl border border-white/10 bg-white/[0.025] p-6">
+      <p class="font-medium text-amber-300">MFA is not enabled.</p>
+      <p class="mt-2 text-sm leading-6 text-slate-400">Add a TOTP authenticator to protect sign-in and sensitive operations with a second factor.</p>
+      <%= link_to "Set up MFA", new_settings_mfa_path, class: "mt-5 inline-flex rounded-xl bg-indigo-500 px-4 py-2.5 text-sm font-semibold hover:bg-indigo-400" %>
+    </div>
+  <% end %>
+</div>
