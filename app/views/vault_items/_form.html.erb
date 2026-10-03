@@ -1,0 +1,68 @@
+<% editing = item.present? %>
+<% form_url = editing ? vault_item_path(item) : vault_items_path %>
+<% form_method = editing ? :patch : :post %>
+<% submit_label = editing ? "Encrypt new version" : "Encrypt and save" %>
+
+<%= form_with url: form_url, method: form_method, class: "mt-7 space-y-5" do |f| %>
+  <%= f.hidden_field :kind, value: kind %>
+
+  <section aria-labelledby="vault-item-identity-heading">
+    <div class="mb-4">
+      <h2 id="vault-item-identity-heading" class="text-sm font-semibold text-slate-200">Item identity</h2>
+      <p class="mt-1 text-xs leading-5 text-slate-500">Use a title you can recognize without revealing the protected contents.</p>
+    </div>
+    <div>
+    <%= f.label :title, "Title", class: "text-sm font-medium text-slate-300" %>
+    <%= f.text_field :title, value: payload["title"], required: true, autocomplete: "off", class: "mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3 outline-none focus:border-indigo-400/50" %>
+    </div>
+  </section>
+
+  <section aria-labelledby="vault-item-secret-heading" class="border-t border-white/10 pt-5">
+    <div class="mb-4">
+      <h2 id="vault-item-secret-heading" class="text-sm font-semibold text-slate-200">Protected details</h2>
+      <p class="mt-1 text-xs leading-5 text-slate-500"><%= vault_kind_description(kind) %>. These values are stored inside the encrypted payload.</p>
+    </div>
+    <div class="space-y-4">
+  <% case kind %>
+  <% when "environment" %>
+    <div><%= f.label :environment_name, "Environment", class: "text-sm font-medium text-slate-300" %><%= f.text_field :environment_name, value: payload["environment"], placeholder: "production", class: "mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3" %></div>
+    <div><%= f.label :env_text, ".env values", class: "text-sm font-medium text-slate-300" %><%= f.text_area :env_text, value: (Vault::EnvParser.dump(payload["entries"]) if editing), rows: 14, required: !editing, autocomplete: "off", spellcheck: false, data: { secret_input: true }, placeholder: "DATABASE_URL=...\nAPI_KEY=...", class: "mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3 font-mono" %></div>
+  <% when "secure_note" %>
+    <div><%= f.label :body, "Secure note", class: "text-sm font-medium text-slate-300" %><%= f.text_area :body, value: payload["body"], rows: 10, data: { secret_input: true }, class: "mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3" %></div>
+  <% when "database" %>
+    <div class="grid gap-4 sm:grid-cols-[1fr_140px]">
+      <div><%= f.label :host, "Host", class: "text-sm font-medium text-slate-300" %><%= f.text_field :host, value: payload["host"].presence || payload["url"], class: "mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3" %></div>
+      <div><%= f.label :port, "Port", class: "text-sm font-medium text-slate-300" %><%= f.text_field :port, value: payload["port"], class: "mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3" %></div>
+    </div>
+    <div><%= f.label :database_name, "Database name", class: "text-sm font-medium text-slate-300" %><%= f.text_field :database_name, value: payload["database_name"], class: "mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3" %></div>
+    <div><%= f.label :username, "Username", class: "text-sm font-medium text-slate-300" %><%= f.text_field :username, value: payload["username"], class: "mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3" %></div>
+    <%= render "secret_field", f: f, editing: editing %>
+  <% when "ssh" %>
+    <div class="grid gap-4 sm:grid-cols-[1fr_140px]">
+      <div><%= f.label :host, "Server / host", class: "text-sm font-medium text-slate-300" %><%= f.text_field :host, value: payload["host"].presence || payload["url"], class: "mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3" %></div>
+      <div><%= f.label :port, "SSH port", class: "text-sm font-medium text-slate-300" %><%= f.text_field :port, value: payload["port"].presence || "22", class: "mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3" %></div>
+    </div>
+    <div><%= f.label :username, "Username", class: "text-sm font-medium text-slate-300" %><%= f.text_field :username, value: payload["username"], class: "mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3" %></div>
+    <%= render "secret_field", f: f, editing: editing %>
+  <% else %>
+    <div><%= f.label :username, (kind == "api_key" ? "Key ID / client ID" : "Username"), class: "text-sm font-medium text-slate-300" %><%= f.text_field :username, value: payload["username"], class: "mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3" %></div>
+    <div><%= f.label :url, (kind == "api_key" ? "Endpoint / service URL" : "Url"), class: "text-sm font-medium text-slate-300" %><%= f.url_field :url, value: payload["url"], class: "mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3" %></div>
+    <%= render "secret_field", f: f, editing: editing %>
+  <% end %>
+    </div>
+  </section>
+
+  <section aria-labelledby="vault-item-organization-heading" class="border-t border-white/10 pt-5">
+    <div class="mb-4">
+      <h2 id="vault-item-organization-heading" class="text-sm font-semibold text-slate-200">Organization</h2>
+      <p class="mt-1 text-xs leading-5 text-slate-500">Add encrypted tags and notes to make the item easier to find later.</p>
+    </div>
+  <div><%= f.label :tags, "Tags", class: "text-sm font-medium text-slate-300" %><%= f.text_field :tags, value: Array(payload["tags"]).join(", "), placeholder: "production, billing, personal", class: "mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3" %><p class="mt-1.5 text-xs text-slate-600">Comma-separated. Tags remain inside the encrypted payload.</p></div>
+  <div class="mt-5"><%= f.label :notes, "Notes", class: "text-sm font-medium text-slate-300" %><%= f.text_area :notes, value: payload["notes"], rows: 4, class: "mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3" %></div>
+  </section>
+
+  <div class="flex flex-wrap items-center gap-3 border-t border-white/10 pt-5">
+    <%= f.submit submit_label, class: "rounded-xl bg-indigo-500 px-5 py-3 text-sm font-semibold hover:bg-indigo-400" %>
+    <%= link_to "Cancel", editing ? vault_item_path(item) : vault_items_path, class: "rounded-xl border border-white/10 px-4 py-3 text-sm text-slate-400 hover:bg-white/5" %>
+  </div>
+<% end %>

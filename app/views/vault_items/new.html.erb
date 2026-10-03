@@ -1,0 +1,33 @@
+<div class="mx-auto max-w-5xl">
+  <div>
+    <p class="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-300">New encrypted item</p>
+    <h1 class="mt-2 text-3xl font-semibold tracking-tight">What do you want to protect?</h1>
+    <p class="mt-2 text-sm text-slate-500">Choose a template so the form matches the secret you are storing.</p>
+  </div>
+
+  <div class="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <% VaultItem::KINDS.each do |candidate| %>
+      <% selected = candidate == @kind %>
+      <%= link_to new_vault_item_path(kind: candidate), class: "rounded-2xl border p-4 transition #{selected ? "border-indigo-400/40 bg-indigo-400/10" : "border-white/10 bg-white/[0.025] hover:bg-white/[0.04]"}" do %>
+        <div class="flex items-start gap-3">
+          <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.04] text-slate-300"><%= vault_kind_icon(candidate) %></span>
+          <span class="min-w-0"><span class="block text-sm font-semibold text-slate-100"><%= vault_kind_label(candidate) %></span><span class="mt-1 block text-xs leading-5 text-slate-500"><%= vault_kind_description(candidate) %></span><span class="mt-2 block text-[11px] leading-4 text-slate-600"><span class="font-semibold text-slate-500">Best for:</span> <%= vault_kind_best_for(candidate) %></span></span>
+        </div>
+      <% end %>
+    <% end %>
+  </div>
+
+  <div class="mt-7 rounded-3xl border border-white/10 bg-white/[0.025] p-5 sm:p-6">
+    <div class="flex flex-col gap-4 border-b border-white/10 pb-5 sm:flex-row sm:items-start sm:justify-between">
+      <div>
+        <div class="flex flex-wrap items-center gap-3"><span class="<%= vault_kind_badge_classes(@kind) %>"><%= vault_kind_label(@kind) %></span><span class="text-xs text-slate-600">Encrypted before persistence</span></div>
+        <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-400"><%= vault_kind_best_for(@kind) %></p>
+      </div>
+      <div class="rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 sm:max-w-sm">
+        <p class="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Typical fields</p>
+        <p class="mt-1.5 text-xs leading-5 text-slate-400"><%= vault_kind_fields(@kind).join(" · ") %></p>
+      </div>
+    </div>
+    <%= render "form", item: nil, kind: @kind, payload: {} %>
+  </div>
+</div>

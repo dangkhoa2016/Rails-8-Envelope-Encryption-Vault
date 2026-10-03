@@ -1,0 +1,6 @@
+<%= turbo_frame_tag "revealed_secret" do %>
+  <div class="rounded-xl border border-amber-800 bg-amber-950/30 p-4 text-sm text-amber-200">
+    Recent identity confirmation is required before decrypting this item.
+    <%= link_to "Confirm identity", new_reauthentication_path, data: { turbo_frame: "_top" }, class: "ml-2 underline" %>
+  </div>
+<% end %>
