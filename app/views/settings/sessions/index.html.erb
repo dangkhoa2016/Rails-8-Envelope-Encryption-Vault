@@ -1,0 +1,64 @@
+<div class="mx-auto max-w-5xl">
+  <%= render "settings/navigation" %>
+  <p class="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-300">Security</p>
+  <h1 class="mt-2 text-3xl font-semibold tracking-tight">Sessions</h1>
+  <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-400">Review signed-in browsers and revoke any session you no longer trust.</p>
+
+  <div class="mt-7 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.025]">
+    <div class="hidden grid-cols-[minmax(0,1fr)_180px_170px_auto] gap-4 border-b border-white/10 px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-600 md:grid">
+      <span>Browser / device</span><span>IP</span><span>Last activity</span><span>Status</span>
+    </div>
+    <% if @sessions.empty? %>
+      <div class="px-6 py-12 text-center">
+        <h2 class="text-lg font-semibold text-slate-200">No session records</h2>
+        <p class="mx-auto mt-2 max-w-lg text-sm leading-6 text-slate-500">No browser sessions are available for this account. A current signed-in session should normally appear here.</p>
+      </div>
+    <% else %>
+    <div class="divide-y divide-white/5">
+      <% @sessions.each do |record| %>
+        <% current = Current.session&.id == record.id %>
+        <% revoked = record.revoked_at.present? %>
+        <% expired = !revoked && record.expired? %>
+        <div class="grid gap-4 px-5 py-4 md:grid-cols-[minmax(0,1fr)_180px_170px_auto] md:items-center <%= "bg-indigo-400/[0.035]" if current %>" data-session-id="<%= record.id %>">
+          <% device = SessionDevicePresenter.for(record.user_agent) %>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <p class="truncate text-sm font-medium text-slate-200"><%= device.label %></p>
+              <span class="rounded-full border border-white/10 px-2 py-0.5 text-[10px] font-medium text-slate-500"><%= device.category %></span>
+              <% if current %><span class="rounded-full border border-indigo-400/20 bg-indigo-400/10 px-2 py-0.5 text-[10px] font-medium text-indigo-200">This device</span><% end %>
+            </div>
+            <p class="mt-1 text-xs text-slate-600" title="<%= record.created_at.to_fs(:long) %>">Signed in <%= time_ago_in_words(record.created_at) %> ago</p>
+            <% if record.user_agent.present? %>
+              <details class="mt-1 text-[11px] text-slate-700">
+                <summary class="cursor-pointer hover:text-slate-500">Technical user agent</summary>
+                <p class="mt-1 break-all font-mono"><%= record.user_agent %></p>
+              </details>
+            <% end %>
+          </div>
+          <div class="text-sm text-slate-400"><%= record.ip_address.presence || "unknown" %></div>
+          <% activity_at = record.last_seen_at || record.created_at %>
+          <div class="text-sm text-slate-400" title="<%= activity_at.to_fs(:long) %>"><%= time_ago_in_words(activity_at) %> ago</div>
+          <div class="flex flex-wrap items-center justify-end gap-2">
+            <% if current %>
+              <span class="rounded-full border border-indigo-400/20 bg-indigo-400/10 px-2.5 py-1 text-xs text-indigo-200" data-session-status="current">Current session</span>
+            <% elsif revoked %>
+              <span class="rounded-full border border-rose-400/15 bg-rose-400/[0.06] px-2.5 py-1 text-xs text-rose-300" data-session-status="revoked">Revoked</span>
+            <% elsif expired %>
+              <span class="rounded-full border border-white/10 px-2.5 py-1 text-xs text-slate-500" data-session-status="expired">Expired</span>
+            <% else %>
+              <span class="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-xs text-emerald-200" data-session-status="active">Active</span>
+            <% end %>
+            <% unless record.revoked_at %>
+              <%= button_to current ? "Revoke current session" : "Revoke",
+                            settings_session_path(record),
+                            method: :delete,
+                            form: { data: { turbo_confirm: current ? "Revoke this current session and sign out?" : "Revoke this session?" } },
+                            class: "rounded-lg border border-rose-400/20 px-3 py-1.5 text-xs text-rose-300 hover:bg-rose-400/10" %>
+            <% end %>
+          </div>
+        </div>
+      <% end %>
+    </div>
+    <% end %>
+  </div>
+</div>

@@ -1,0 +1,89 @@
+<div class="mx-auto max-w-6xl">
+  <div class="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+    <div>
+      <p class="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-300">Security history</p>
+      <h1 class="mt-2 text-3xl font-semibold tracking-tight">Audit log</h1>
+      <p class="mt-2 text-sm text-slate-500"><%= @total %> matching event(s)</p>
+    </div>
+    <div class="space-y-3">
+      <div class="flex flex-wrap gap-2" aria-label="Audit categories">
+        <% @available_categories.each do |category| %>
+          <% active = @category_filter == category %>
+          <%= link_to audit_events_path(category: category), class: "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium #{active ? "border-indigo-400/30 bg-indigo-400/10 text-indigo-200" : "border-white/10 bg-white/[0.025] text-slate-400 hover:text-white"}", data: { audit_category: category } do %>
+            <span><%= category %></span><span class="rounded-full bg-black/20 px-1.5 py-0.5 tabular-nums"><%= @category_counts.fetch(category, 0) %></span>
+          <% end %>
+        <% end %>
+      </div>
+    <%= form_with url: audit_events_path, method: :get, class: "flex flex-wrap items-end gap-2" do |f| %>
+      <div>
+        <%= f.label :category, "Category", class: "block text-xs text-slate-500" %>
+        <%= f.select :category, options_for_select([["All categories", ""]] + @available_categories.map { |category| [category, category] }, @category_filter), {}, class: "mt-1 rounded-xl border border-white/10 bg-slate-950 px-3 py-2.5 text-sm" %>
+      </div>
+      <div>
+        <%= f.label :event_action, "Action", class: "block text-xs text-slate-500" %>
+        <%= f.select :event_action, options_for_select([["All actions", ""]] + @available_actions.map { |action| [AuditEventPresenter.for(action).title, action] }, @action_filter), {}, class: "mt-1 rounded-xl border border-white/10 bg-slate-950 px-3 py-2.5 text-sm" %>
+      </div>
+      <%= f.submit "Filter", class: "rounded-xl border border-white/10 px-3 py-2.5 text-sm hover:bg-white/5" %>
+      <% if @action_filter.present? || @category_filter.present? %><%= link_to "Clear", audit_events_path, class: "rounded-xl border border-white/10 px-3 py-2.5 text-sm text-slate-400" %><% end %>
+    <% end %>
+    </div>
+  </div>
+
+  <% if @events.empty? %>
+    <% filters_active = @action_filter.present? || @category_filter.present? %>
+    <div class="mt-7 rounded-3xl border border-dashed border-white/10 bg-white/[0.02] px-6 py-12 text-center">
+      <h2 class="text-lg font-semibold text-slate-200"><%= filters_active ? "No matching audit events" : "No security history yet" %></h2>
+      <p class="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500"><%= filters_active ? "Try another category or action, or clear the current filters." : "Security-sensitive actions such as sign-ins, vault changes, MFA updates, and session revocations will appear here." %></p>
+      <% if filters_active %><%= link_to "Clear audit filters", audit_events_path, class: "mt-4 inline-flex rounded-xl border border-white/10 px-4 py-2.5 text-sm font-medium text-slate-300 hover:bg-white/5" %><% end %>
+    </div>
+  <% else %>
+    <div class="mt-7 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.025]">
+      <div class="hidden grid-cols-[minmax(0,1fr)_260px] gap-4 border-b border-white/10 px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-600 md:grid"><span>Action</span><span>Time</span></div>
+      <div class="divide-y divide-white/5">
+        <% @events.each do |event| %>
+          <div class="grid gap-2 px-5 py-4 md:grid-cols-[minmax(0,1fr)_260px] md:items-center">
+            <% presentation = AuditEventPresenter.for_event(event) %>
+            <div class="min-w-0" data-audit-action="<%= event.action %>">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-sm font-medium text-slate-200"><%= presentation.title %></span>
+                <span class="rounded-full border border-indigo-400/15 bg-indigo-400/5 px-2 py-0.5 text-[10px] font-medium text-indigo-300" data-audit-event-category="<%= presentation.category %>"><%= presentation.category %></span>
+                <code class="rounded-md border border-white/5 bg-slate-950/70 px-1.5 py-0.5 text-[10px] text-slate-600"><%= event.action %></code>
+              </div>
+              <p class="mt-1 text-xs leading-5 text-slate-500"><%= presentation.description %></p>
+              <% if presentation.safe_context.any? %>
+                <dl class="mt-2 flex flex-wrap gap-1.5">
+                  <% presentation.safe_context.each do |label, value| %>
+                    <div class="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.025] px-2 py-1 text-[10px]">
+                      <dt class="text-slate-600"><%= label %>:</dt>
+                      <dd class="font-medium text-slate-400"><%= value %></dd>
+                    </div>
+                  <% end %>
+                </dl>
+              <% end %>
+              <% if presentation.item_reference || presentation.correlation_id %>
+                <details class="mt-2 text-[11px] text-slate-700">
+                  <summary class="cursor-pointer hover:text-slate-500">Technical context</summary>
+                  <div class="mt-1 space-y-1 font-mono">
+                    <% if presentation.item_reference %><div>item: <%= presentation.item_reference %>…</div><% end %>
+                    <% if presentation.correlation_id %><div>request: <%= presentation.correlation_id %>…</div><% end %>
+                  </div>
+                </details>
+              <% end %>
+            </div>
+            <time class="text-sm text-slate-500" datetime="<%= event.created_at.iso8601 %>"><%= event.created_at.to_fs(:long) %></time>
+          </div>
+        <% end %>
+      </div>
+    </div>
+
+    <% if @total_pages > 1 %>
+      <nav class="mt-5 flex items-center justify-between gap-4" aria-label="Audit pagination">
+        <div class="text-sm text-slate-500">Page <%= @page %> of <%= @total_pages %></div>
+        <div class="flex gap-2">
+          <% if @page > 1 %><%= link_to "Previous", audit_events_path(category: @category_filter, event_action: @action_filter, page: @page - 1), class: "rounded-xl border border-white/10 px-3 py-2 text-sm" %><% end %>
+          <% if @page < @total_pages %><%= link_to "Next", audit_events_path(category: @category_filter, event_action: @action_filter, page: @page + 1), class: "rounded-xl border border-white/10 px-3 py-2 text-sm" %><% end %>
+        </div>
+      </nav>
+    <% end %>
+  <% end %>
+</div>

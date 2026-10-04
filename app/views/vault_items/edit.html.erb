@@ -1,0 +1,24 @@
+<div class="mx-auto max-w-5xl">
+  <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+    <div>
+      <p class="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-300">Vault · Edit</p>
+      <h1 class="mt-2 text-3xl font-semibold tracking-tight">Create a new encrypted version</h1>
+      <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-500">Editing never overwrites encrypted history. Saving creates a new version and keeps older versions available for recovery.</p>
+    </div>
+    <%= link_to "← Back to item", vault_item_path(@item), class: "text-sm text-slate-500 hover:text-slate-300" %>
+  </div>
+
+  <div class="mt-6 rounded-3xl border border-white/10 bg-white/[0.025] p-5 sm:p-6">
+    <div class="grid gap-4 border-b border-white/10 pb-5 lg:grid-cols-[minmax(0,1fr)_minmax(260px,360px)]">
+      <div>
+        <div class="flex flex-wrap items-center gap-3"><span class="<%= vault_kind_badge_classes(@item.kind) %>"><%= vault_kind_label(@item.kind) %></span><span class="text-xs text-slate-600">Item type is fixed after creation</span></div>
+        <p class="mt-3 text-sm leading-6 text-slate-400"><%= vault_kind_best_for(@item.kind) %></p>
+      </div>
+      <div class="rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3">
+        <p class="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Versioning safety</p>
+        <p class="mt-1.5 text-xs leading-5 text-slate-400">Leave the secret field blank to keep its current encrypted value. Entering a new value rotates only this item into a new version.</p>
+      </div>
+    </div>
+    <%= render "form", item: @item, kind: @item.kind, payload: @payload %>
+  </div>
+</div>

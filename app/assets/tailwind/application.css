@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+@layer base {
+  :focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--color-indigo-400) 80%, white);
+    outline-offset: 3px;
+  }
+
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+@layer components {
+  [data-dashboard-main-grid] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .security-posture-nowrap {
+    white-space: nowrap;
+  }
+
+  @media (min-width: 96rem) {
+    [data-dashboard-main-grid] {
+      grid-template-columns: minmax(0, 1.4fr) minmax(340px, 0.6fr);
+    }
+  }
+}

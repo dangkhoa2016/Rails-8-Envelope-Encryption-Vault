@@ -1,0 +1,100 @@
+<section>
+  <% filters_active = @query.present? || @kind_filter.present? || @status_filter != "all" || @favorite_filter || @tag_filter.present? %>
+  <div class="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <p class="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-300">Vault</p>
+      <h1 class="mt-2 text-3xl font-semibold tracking-tight">All encrypted items</h1>
+      <div class="mt-2 flex flex-wrap items-center gap-3 text-sm text-slate-500">
+        <span><%= @total %> matching item(s)</span>
+        <% if filters_active %>
+          <span class="rounded-full border border-indigo-400/20 bg-indigo-400/10 px-2.5 py-1 text-xs font-medium text-indigo-200">Filters active</span>
+          <%= link_to "Clear filters", vault_items_path, class: "text-xs font-medium text-indigo-300 hover:text-indigo-200" %>
+        <% end %>
+      </div>
+    </div>
+    <%= link_to "New encrypted item", new_vault_item_path, class: "inline-flex items-center justify-center rounded-xl bg-indigo-500 px-4 py-2.5 text-sm font-semibold hover:bg-indigo-400" %>
+  </div>
+
+  <%= form_with url: search_vault_items_path, method: :post, data: { turbo: false }, class: "mt-7 grid gap-3 rounded-2xl border border-white/10 bg-white/[0.025] p-4 lg:grid-cols-[minmax(0,1fr)_190px_160px_180px_auto]" do |f| %>
+    <div>
+      <%= f.label :q, "Search encrypted titles", class: "sr-only" %>
+      <%= f.search_field :q, value: @query, autocomplete: "off", spellcheck: false, placeholder: "Search encrypted titles", class: "w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-2.5 text-sm outline-none focus:border-indigo-400/50" %>
+    </div>
+    <div>
+      <%= f.label :kind, "Filter by type", class: "sr-only" %>
+      <%= f.select :kind, options_for_select([["All types", ""]] + VaultItem::KINDS.map { |kind| [vault_kind_label(kind), kind] }, @kind_filter), {}, class: "w-full rounded-xl border border-white/10 bg-slate-950/80 px-3 py-2.5 text-sm" %>
+    </div>
+    <div>
+      <%= f.label :status, "Filter by state", class: "sr-only" %>
+      <%= f.select :status, options_for_select([["All states", "all"], ["Active", "active"], ["Archived", "archived"]], @status_filter), {}, class: "w-full rounded-xl border border-white/10 bg-slate-950/80 px-3 py-2.5 text-sm" %>
+    </div>
+    <div>
+      <%= f.label :tag, "Filter by tag", class: "sr-only" %>
+      <%= f.select :tag, options_for_select([["All tags", ""]] + @available_tags.map { |tag| [tag, tag] }, @tag_filter), {}, class: "w-full rounded-xl border border-white/10 bg-slate-950/80 px-3 py-2.5 text-sm" %>
+    </div>
+    <div class="flex gap-2">
+      <label class="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/10 px-3 py-2.5 text-sm text-slate-300">
+        <%= f.check_box :favorite, { checked: @favorite_filter, class: "rounded border-white/20 bg-slate-900 text-indigo-500" }, "1", "0" %>
+        Favorites
+      </label>
+      <%= f.submit "Search", class: "rounded-xl border border-white/10 bg-white/10 px-4 py-2.5 text-sm font-semibold hover:bg-white/15" %>
+    </div>
+  <% end %>
+
+  <% if @vault_empty %>
+    <div class="mt-8 rounded-3xl border border-dashed border-white/10 bg-white/[0.02] px-6 py-14 text-center">
+      <div class="mx-auto grid h-14 w-14 place-items-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-400"><%= vault_kind_icon("login", css: "h-6 w-6") %></div>
+      <h2 class="mt-5 text-xl font-semibold">No secrets yet</h2>
+      <p class="mx-auto mt-2 max-w-lg text-sm leading-6 text-slate-500">Start with a Login, Secure note, API key, Database, or Server template. Your sensitive payload is encrypted before persistence.</p>
+      <%= link_to "Create your first secret", new_vault_item_path, class: "mt-5 inline-flex rounded-xl bg-indigo-500 px-4 py-2.5 text-sm font-semibold hover:bg-indigo-400" %>
+    </div>
+  <% elsif @summaries.empty? %>
+    <div class="mt-8 rounded-3xl border border-dashed border-white/10 bg-white/[0.02] px-6 py-12 text-center">
+      <h2 class="text-lg font-semibold">No matching secrets</h2>
+      <p class="mt-2 text-sm text-slate-500">Try another title, type, tag, favorite, or archive filter.</p>
+      <%= link_to "Clear filters", vault_items_path, class: "mt-4 inline-flex rounded-xl border border-white/10 px-4 py-2.5 text-sm" %>
+    </div>
+  <% else %>
+    <div class="mt-6 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+      <div class="hidden grid-cols-[minmax(0,1fr)_150px_140px_52px] gap-4 border-b border-white/10 px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-600 md:grid">
+        <span>Item</span><span>Type</span><span>Updated</span><span class="sr-only">Favorite</span>
+      </div>
+      <div class="divide-y divide-white/5">
+        <% @summaries.each do |item, title| %>
+          <div class="grid gap-3 px-5 py-4 transition hover:bg-white/[0.035] md:grid-cols-[minmax(0,1fr)_150px_140px_52px] md:items-center">
+            <%= link_to vault_item_path(item), class: "flex min-w-0 items-center gap-3" do %>
+              <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.035] text-slate-300"><%= vault_kind_icon(item.kind) %></span>
+              <span class="min-w-0">
+                <span class="block truncate text-sm font-medium text-slate-100"><%= title %></span>
+                <span class="mt-1 flex flex-wrap items-center gap-1.5">
+                  <% if item.archived_at.present? %><span class="text-xs text-amber-300" data-vault-status="archived">Archived</span><% else %><span class="text-xs text-slate-600">Protected</span><% end %>
+                  <% @tags_by_item_id.fetch(item.id, []).first(3).each do |tag| %><span class="rounded-full border border-white/10 bg-white/[0.035] px-2 py-0.5 text-[11px] text-slate-400"><%= tag %></span><% end %>
+                </span>
+              </span>
+            <% end %>
+            <span><span class="<%= vault_kind_badge_classes(item.kind) %>"><%= vault_kind_label(item.kind) %></span></span>
+            <span class="text-xs text-slate-500"><%= time_ago_in_words(item.updated_at) %> ago</span>
+            <span class="flex justify-end">
+              <% if item.favorite? %>
+                <%= button_to "★", unfavorite_vault_item_path(item), method: :post, title: "Remove from favorites", aria: { label: "Remove from favorites" }, class: "grid h-9 w-9 place-items-center rounded-xl border border-amber-400/20 bg-amber-400/10 text-lg text-amber-300 hover:bg-amber-400/15" %>
+              <% else %>
+                <%= button_to "☆", favorite_vault_item_path(item), method: :post, title: "Add to favorites", aria: { label: "Add to favorites" }, class: "grid h-9 w-9 place-items-center rounded-xl border border-white/10 text-lg text-slate-500 hover:bg-white/5 hover:text-amber-300" %>
+              <% end %>
+            </span>
+          </div>
+        <% end %>
+      </div>
+    </div>
+
+    <% if @total_pages > 1 %>
+      <nav class="mt-5 flex items-center justify-between gap-4" aria-label="Vault pagination">
+        <div class="text-sm text-slate-500">Page <%= @page %> of <%= @total_pages %></div>
+        <div class="flex gap-2">
+          <% shared = { q: @query, kind: @kind_filter, status: @status_filter, tag: @tag_filter, favorite: (@favorite_filter ? "1" : "0") } %>
+          <% if @page > 1 %><%= button_to "Previous", search_vault_items_path, method: :post, params: shared.merge(page: @page - 1), class: "rounded-xl border border-white/10 px-3 py-2 text-sm" %><% end %>
+          <% if @page < @total_pages %><%= button_to "Next", search_vault_items_path, method: :post, params: shared.merge(page: @page + 1), class: "rounded-xl border border-white/10 px-3 py-2 text-sm" %><% end %>
+        </div>
+      </nav>
+    <% end %>
+  <% end %>
+</section>

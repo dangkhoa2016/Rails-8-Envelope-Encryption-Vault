@@ -1,0 +1,12 @@
+<div class="mx-auto max-w-lg rounded-3xl border border-white/10 bg-white/[0.025] p-7 sm:p-9">
+  <p class="text-xs font-semibold uppercase tracking-[0.14em] text-amber-300">Sensitive action</p>
+  <h1 class="mt-3 text-3xl font-semibold tracking-tight">Confirm your identity</h1>
+  <p class="mt-2 text-sm leading-6 text-slate-400">Sensitive operations require recent verification so an unattended session cannot reveal or modify secrets.</p>
+  <%= form_with url: reauthentication_path, class: "mt-7 space-y-5" do |f| %>
+    <div><%= f.label :password, "Current password", class: "text-sm font-medium text-slate-300" %><%= f.password_field :password, required: true, autocomplete: "current-password", class: "mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3" %></div>
+    <% if Current.user&.mfa_enabled? %>
+      <div><%= f.label :token, "Authenticator or recovery code", class: "text-sm font-medium text-slate-300" %><%= f.text_field :token, autocomplete: "one-time-code", inputmode: "numeric", class: "mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3" %></div>
+    <% end %>
+    <%= f.submit "Continue", class: "w-full rounded-xl bg-indigo-500 px-4 py-3 font-semibold" %>
+  <% end %>
+</div>
