@@ -1,0 +1,12 @@
+# Example only. Kaggle does not provide a durable cron daemon.
+# Install on a persistent deployment host after copying ops.env.example
+# to /etc/ruby-envelope-vault/ops.env with mode 0600.
+
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# Daily encrypted backup + verify + real offsite round-trip + retention.
+15 2 * * * cd /opt/ruby-envelope-vault/current && set -a && . /etc/ruby-envelope-vault/ops.env && set +a && script/scheduled-ops daily
+
+# Weekly remote-download -> fresh-DB restore -> exact-canary DR rehearsal.
+30 3 * * 0 cd /opt/ruby-envelope-vault/current && set -a && . /etc/ruby-envelope-vault/ops.env && set +a && script/scheduled-ops dr

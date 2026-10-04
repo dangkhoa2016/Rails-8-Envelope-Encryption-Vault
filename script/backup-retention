@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd "$(dirname "$0")/.."
+
+backup_dir="${BACKUP_DIR:-./backups}"
+keep="${RETENTION_KEEP:-7}"
+apply="${RETENTION_APPLY:-0}"
+include_plaintext="${RETENTION_INCLUDE_PLAINTEXT:-0}"
+
+[[ "$keep" =~ ^[0-9]+$ ]] || { echo "ERROR RETENTION_KEEP must be an integer" >&2; exit 1; }
+(( keep >= 2 )) || { echo "ERROR RETENTION_KEEP must be at least 2" >&2; exit 1; }
+[[ "$apply" == "0" || "$apply" == "1" ]] || { echo "ERROR RETENTION_APPLY must be 0 or 1" >&2; exit 1; }
+[[ "$include_plaintext" == "0" || "$include_plaintext" == "1" ]] || { echo "ERROR RETENTION_INCLUDE_PLAINTEXT must be 0 or 1" >&2; exit 1; }
+
+mkdir -p "$backup_dir"
+backup_dir="$(cd "$backup_dir" && pwd -P)"
+
+shopt -s nullglob
+files=("$backup_dir"/ruby-envelope-vault-*.dump.age)
+if [ "$include_plaintext" = "1" ]; then
+  files+=("$backup_dir"/ruby-envelope-vault-*.dump)
+fi
+if (( ${#files[@]} <= keep )); then
+  echo "PASS retention nothing-to-do count=${#files[@]} keep=$keep apply=$apply"
+  exit 0
+fi
+
+mapfile -t sorted < <(printf '%s\n' "${files[@]}" | LC_ALL=C sort)
+delete_count=$((${#sorted[@]} - keep))
+
+for ((i=0; i<delete_count; i++)); do
+  file="${sorted[$i]}"
+  base="$(basename "$file")"
+
+  case "$base" in
+    ruby-envelope-vault-*.dump.age|ruby-envelope-vault-*.dump) ;;
+    *) echo "ERROR unsafe retention candidate: $base" >&2; exit 1 ;;
+  esac
+
+  if [[ "$file" != "$backup_dir/"* ]]; then
+    echo "ERROR retention candidate escaped backup directory" >&2
+    exit 1
+  fi
+
+  if [ "$apply" = "1" ]; then
+    rm -f -- "$file" "$file.sha256"
+    echo "DELETE retention backup=$base"
+  else
+    echo "DRYRUN retention backup=$base"
+  fi
+done
+remaining=$((${#files[@]} - delete_count))
+if [ "$apply" = "1" ]; then
+  echo "PASS retention applied deleted=$delete_count remaining=$remaining keep=$keep"
+else
+  echo "PASS retention dry-run candidates=$delete_count keep=$keep"
+  echo "NOTE set RETENTION_APPLY=1 to delete only the listed guarded backup/checksum pairs"
+fi

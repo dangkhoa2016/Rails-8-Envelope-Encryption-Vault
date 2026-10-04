@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+status=0
+pass() { printf 'PASS %-26s %s\n' "$1" "${2:-}"; }
+fail() { printf 'FAIL %-26s %s\n' "$1" "${2:-}" >&2; status=1; }
+skip() { printf 'SKIP %-26s %s\n' "$1" "${2:-}"; }
+
+for cmd in ruby bundle psql pg_dump pg_restore age curl; do
+  if command -v "$cmd" >/dev/null 2>&1; then
+    pass "command:$cmd"
+  else
+    fail "command:$cmd" "missing"
+  fi
+done
+
+if [ "$status" -ne 0 ]; then
+  echo "FAIL operator prerequisites"
+  exit "$status"
+fi
+
+production_probe="$(mktemp)"
+trap 'rm -f "$production_probe"' EXIT
+
+if RAILS_ENV=production bin/rails runner '
+  ActiveRecord::Base.connection.select_value("SELECT 1")
+  provider = KeyProviders::Registry.fetch
+  provider.verify_key! if provider.respond_to?(:verify_key!)
+  provider.assert_write_allowed! if provider.respond_to?(:assert_write_allowed!)
+  puts "production_boot=PASS"
+  puts "database=PASS"
+  puts "vault_kek=PASS"
+' >"$production_probe" 2>&1; then
+  grep -q '^production_boot=PASS$' "$production_probe" && pass production_boot || fail production_boot "probe output missing"
+  grep -q '^database=PASS$' "$production_probe" && pass database || fail database "probe output missing"
+  grep -q '^vault_kek=PASS$' "$production_probe" && pass vault_kek || fail vault_kek "probe output missing"
+else
+  fail production_boot "Rails production security/runtime probe failed"
+  sed -E 's#(postgres(ql)?://)[^[:space:]]+#\1[FILTERED]#g' "$production_probe" >&2
+fi
+
+if [ -n "${BACKUP_AGE_RECIPIENT:-}" ]; then
+  pass backup_recipient_configured
+else
+  if [ "${OPS_REQUIRE_BACKUP_CONFIG:-0}" = "1" ]; then
+    fail backup_recipient_configured "BACKUP_AGE_RECIPIENT is required by strict ops gate"
+  else
+    skip backup_recipient_configured "set OPS_REQUIRE_BACKUP_CONFIG=1 to enforce"
+  fi
+fi
+
+if [ -n "${APP_URL:-}" ]; then
+  if script/production-smoke >/dev/null; then
+    pass https_security_smoke
+  else
+    fail https_security_smoke "script/production-smoke failed"
+  fi
+else
+  if [ "${OPS_REQUIRE_HTTPS_SMOKE:-0}" = "1" ]; then
+    fail https_security_smoke "APP_URL is required by strict ops gate"
+  else
+    skip https_security_smoke "set APP_URL or OPS_REQUIRE_HTTPS_SMOKE=1"
+  fi
+fi
+
+if [ "$status" -eq 0 ]; then
+  echo "PASS operational readiness gate"
+else
+  echo "FAIL operational readiness gate"
+fi
+exit "$status"

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Ruby Envelope Vault daily backup operations
+
+[Timer]
+OnCalendar=*-*-* 02:15:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+Unit=ruby-envelope-vault-ops-daily.service
+
+[Install]
+WantedBy=timers.target

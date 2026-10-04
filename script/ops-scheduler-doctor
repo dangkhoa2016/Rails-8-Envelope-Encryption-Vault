@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd "$(dirname "$0")/.."
+
+mode="${1:-systemd}"
+case "$mode" in systemd|cron) ;; *) echo "usage: script/ops-scheduler-doctor [systemd|cron]" >&2; exit 64 ;; esac
+
+root="${OPS_INSTALL_ROOT:-/}"
+prefix="${OPS_INSTALL_PREFIX:-/opt/ruby-envelope-vault/current}"
+env_file="${OPS_INSTALL_ENV_FILE:-/etc/ruby-envelope-vault/ops.env}"
+service_user="${OPS_SERVICE_USER:-ruby-vault}"
+service_group="${OPS_SERVICE_GROUP:-$service_user}"
+dr_service_user="${OPS_DR_SERVICE_USER:-root}"
+dr_service_group="${OPS_DR_SERVICE_GROUP:-$dr_service_user}"
+status=0
+
+root_path() {
+  local p="$1"
+  if [ "$root" = "/" ]; then printf '%s\n' "$p"; else printf '%s%s\n' "${root%/}" "$p"; fi
+}
+pass(){ printf 'PASS %-28s %s\n' "$1" "${2:-}"; }
+fail(){ printf 'FAIL %-28s %s\n' "$1" "${2:-}" >&2; status=1; }
+
+dst="$(root_path "$prefix")"
+env_dst="$(root_path "$env_file")"
+[ -x "$dst/script/scheduled-ops" ] && pass scheduled_ops "$dst" || fail scheduled_ops "$dst/script/scheduled-ops missing"
+[ -f "$env_dst" ] && pass env_file "$env_dst" || fail env_file "$env_dst missing"
+if [ -f "$env_dst" ]; then
+  mode_bits="$(stat -c %a "$env_dst" 2>/dev/null || true)"
+  case "$mode_bits" in 400|600) pass env_permissions "$mode_bits" ;; *) fail env_permissions "mode=$mode_bits" ;; esac
+
+  required_names=(RAILS_ENV DATABASE_URL SECRET_KEY_BASE VAULT_ACTIVE_KEK_ID VAULT_KEK_DIR APP_HOSTS BACKUP_AGE_RECIPIENT BACKUP_AGE_IDENTITY RCLONE_CONFIG OFFSITE_RCLONE_DEST USER_EMAIL ITEM_ID EXPECTED_CANARY_FIELD EXPECTED_CANARY_VALUE OPS_STATE_DIR OPS_EVIDENCE_DIR OPS_POSTGRES_BIN DR_ADMIN_MODE)
+  missing_names=()
+  for name in "${required_names[@]}"; do
+    grep -Eq "^[[:space:]]*${name}=" "$env_dst" || missing_names+=("$name")
+  done
+  if [ "${#missing_names[@]}" -eq 0 ]; then pass env_contract; else fail env_contract "missing=${missing_names[*]}"; fi
+
+  if [ "$root" = "/" ]; then
+    set -a
+    . "$env_dst"
+    set +a
+    for name in "${required_names[@]}"; do
+      value="${!name-}"
+      if [ -z "$value" ]; then fail "env:$name" "empty"; continue; fi
+      if [[ "$value" =~ REPLACE_|example\.invalid ]]; then fail "env:$name" "placeholder"; else pass "env:$name"; fi
+    done
+    [ "${#SECRET_KEY_BASE}" -ge 64 ] && pass secret_key_length || fail secret_key_length "must be >=64 characters"
+    [ -f "$BACKUP_AGE_IDENTITY" ] && pass age_identity "$BACKUP_AGE_IDENTITY" || fail age_identity "missing"
+    [ -f "$RCLONE_CONFIG" ] && pass rclone_config "$RCLONE_CONFIG" || fail rclone_config "missing"
+    [ -d "$VAULT_KEK_DIR" ] && pass vault_kek_dir "$VAULT_KEK_DIR" || fail vault_kek_dir "missing"
+    if [ -f "$VAULT_KEK_DIR/$VAULT_ACTIVE_KEK_ID.key" ]; then pass active_kek "$VAULT_ACTIVE_KEK_ID"; else fail active_kek "missing"; fi
+    [ -d "$OPS_POSTGRES_BIN" ] && pass postgres_bin "$OPS_POSTGRES_BIN" || fail postgres_bin "missing"
+    case "$DR_ADMIN_MODE" in auto|url|local-postgres) pass dr_admin_mode "$DR_ADMIN_MODE" ;; *) fail dr_admin_mode "$DR_ADMIN_MODE" ;; esac
+    if [ "$DR_ADMIN_MODE" = "local-postgres" ]; then
+      [ -n "${DR_APP_OS_USER:-}" ] || fail dr_app_os_user "empty"
+      if [ -n "${DR_APP_OS_USER:-}" ]; then
+        id "$DR_APP_OS_USER" >/dev/null 2>&1 && pass dr_app_os_user "$DR_APP_OS_USER" || fail dr_app_os_user "$DR_APP_OS_USER missing"
+        db_user="$(python3 - "$DATABASE_URL" <<'PY'
+import sys, urllib.parse
+u=urllib.parse.urlparse(sys.argv[1])
+print(urllib.parse.unquote(u.username or ""))
+PY
+)"
+        [ "$DR_APP_OS_USER" = "$db_user" ] && pass dr_peer_identity "$DR_APP_OS_USER" || fail dr_peer_identity "os=$DR_APP_OS_USER db=$db_user"
+      fi
+    fi
+  else
+    pass env_values "staging validation checks names only"
+  fi
+fi
+
+if [ -f "$env_dst" ]; then
+  for key in BACKUP_DIR OPS_STATE_DIR OPS_EVIDENCE_DIR; do
+    if [ "$root" = "/" ]; then
+      dir_value="${!key-}"
+    else
+      dir_value="$(sed -n "s/^[[:space:]]*${key}=//p" "$env_dst" | tail -1)"
+    fi
+    if [[ "$dir_value" == /* && "$dir_value" != "/" ]]; then
+      dir_check="$(root_path "$dir_value")"
+      if [ -d "$dir_check" ]; then
+        dir_mode="$(stat -c %a "$dir_check" 2>/dev/null || true)"
+        case "$dir_mode" in 700|750) pass "dir:$key" "mode=$dir_mode" ;; *) fail "dir:$key" "mode=$dir_mode" ;; esac
+      else
+        fail "dir:$key" "missing"
+      fi
+    else
+      fail "dir:$key" "unsafe path"
+    fi
+  done
+fi
+
+if [ "$root" = "/" ]; then
+  id "$service_user" >/dev/null 2>&1 && pass service_user "$service_user" || fail service_user "$service_user missing"
+  getent group "$service_group" >/dev/null 2>&1 && pass service_group "$service_group" || fail service_group "$service_group missing"
+  if command -v runuser >/dev/null 2>&1 && id "$service_user" >/dev/null 2>&1 && [ -f "$env_dst" ]; then
+    for dir_name in BACKUP_DIR OPS_STATE_DIR OPS_EVIDENCE_DIR; do
+      dir_value="${!dir_name-}"
+      runuser -u "$service_user" -- test -w "$dir_value" && pass "access:$dir_name" "writable" || fail "access:$dir_name" "not writable"
+    done
+    runuser -u "$service_user" -- test -r "$BACKUP_AGE_IDENTITY" && pass access_age_identity || fail access_age_identity "not readable"
+    runuser -u "$service_user" -- test -r "$RCLONE_CONFIG" && pass access_rclone_config || fail access_rclone_config "not readable"
+    runuser -u "$service_user" -- test -r "$VAULT_KEK_DIR/$VAULT_ACTIVE_KEK_ID.key" && pass access_active_kek || fail access_active_kek "not readable"
+  fi
+else
+  pass service_user "staging validation skips host account lookup"
+  pass service_group "staging validation skips host group lookup"
+fi
+
+for cmd in bash flock age pg_dump pg_restore rclone python3; do
+  if command -v "$cmd" >/dev/null 2>&1; then pass "tool:$cmd"; else fail "tool:$cmd" "missing"; fi
+done
+
+if [ "$mode" = "systemd" ]; then
+  unit_dir="$(root_path /etc/systemd/system)"
+  units=(ruby-envelope-vault-ops-daily.service ruby-envelope-vault-ops-daily.timer ruby-envelope-vault-dr.service ruby-envelope-vault-dr.timer)
+  for unit in "${units[@]}"; do
+    [ -f "$unit_dir/$unit" ] && pass "unit:$unit" || fail "unit:$unit" "missing"
+  done
+  if [ -f "$unit_dir/ruby-envelope-vault-ops-daily.service" ]; then
+    grep -Fqx "User=$service_user" "$unit_dir/ruby-envelope-vault-ops-daily.service" && pass daily_service_user "$service_user" || fail daily_service_user
+  fi
+  if [ -f "$unit_dir/ruby-envelope-vault-dr.service" ]; then
+    grep -Fqx "User=$dr_service_user" "$unit_dir/ruby-envelope-vault-dr.service" && pass dr_service_user "$dr_service_user" || fail dr_service_user
+    grep -Fqx "Environment=OPS_SERVICE_USER=$service_user" "$unit_dir/ruby-envelope-vault-dr.service" && pass dr_state_owner "$service_user" || fail dr_state_owner
+  fi
+  if command -v systemd-analyze >/dev/null 2>&1; then
+    if [ "$root" = "/" ]; then
+      if SYSTEMD_UNIT_PATH="$unit_dir:/usr/lib/systemd/system:/lib/systemd/system" systemd-analyze verify "${units[@]/#/$unit_dir/}" >/tmp/rev-systemd-verify.$$ 2>&1; then
+        pass systemd_syntax
+      else
+        cat /tmp/rev-systemd-verify.$$ >&2
+        fail systemd_syntax
+      fi
+      rm -f /tmp/rev-systemd-verify.$$
+    else
+      syntax_ok=1
+      for service in ruby-envelope-vault-ops-daily.service ruby-envelope-vault-dr.service; do
+        grep -q '^Type=oneshot$' "$unit_dir/$service" || syntax_ok=0
+        grep -q '^ExecStart=/' "$unit_dir/$service" || syntax_ok=0
+        grep -q '^EnvironmentFile=/' "$unit_dir/$service" || syntax_ok=0
+      done
+      for timer in ruby-envelope-vault-ops-daily.timer ruby-envelope-vault-dr.timer; do
+        cal="$(sed -n 's/^OnCalendar=//p' "$unit_dir/$timer")"
+        [ -n "$cal" ] || syntax_ok=0
+        systemd-analyze calendar "$cal" >/dev/null 2>&1 || syntax_ok=0
+        grep -q '^Persistent=true$' "$unit_dir/$timer" || syntax_ok=0
+      done
+      [ "$syntax_ok" = "1" ] && pass systemd_syntax "staging static+calendar validation" || fail systemd_syntax
+    fi
+  fi
+  if [ "$root" = "/" ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl is-enabled ruby-envelope-vault-ops-daily.timer >/dev/null 2>&1 && pass daily_timer_enabled || fail daily_timer_enabled
+    systemctl is-enabled ruby-envelope-vault-dr.timer >/dev/null 2>&1 && pass dr_timer_enabled || fail dr_timer_enabled
+  else
+    pass timer_activation "staging/not-live check"
+  fi
+else
+  cron_file="$(root_path /etc/cron.d/ruby-envelope-vault)"
+  [ -f "$cron_file" ] && pass cron_file "$cron_file" || fail cron_file "$cron_file missing"
+  if [ -f "$cron_file" ]; then
+    grep -q 'script/scheduled-ops daily' "$cron_file" && pass cron_daily || fail cron_daily
+    grep -q 'script/scheduled-ops dr' "$cron_file" && pass cron_dr || fail cron_dr
+  fi
+fi
+
+if [ "$status" -eq 0 ]; then echo "PASS scheduler doctor mode=$mode"; else echo "FAIL scheduler doctor mode=$mode" >&2; fi
+exit "$status"

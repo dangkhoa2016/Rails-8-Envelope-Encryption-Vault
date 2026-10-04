@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+PROJECT_HOME="$(cd "$ROOT/.." && pwd -P)"
+CURRENT_LINK="${CURRENT_LINK:-$PROJECT_HOME/current}"
+RUNTIME_ROOT="${RUNTIME_ROOT:-$PROJECT_HOME/.ruby-envelope-vault-runtime}"
+ENV_FILE="${ENV_FILE:-}"
+HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:3000/up}"
+
+if [[ "${RAILS_ENV:-}" == "production" || -n "${PRODUCTION_ENV_FILE:-}" || -n "${OPS_ENV_FILE:-}" ]]; then
+  # Production selectors are authoritative even when activate-runtime used
+  # ENV_FILE=/dev/null to suppress development env loading.
+  # shellcheck disable=SC1091
+  source "$ROOT/script/lib/production-env.sh"
+  ENV_FILE="$(revault_production_env_path)"
+  revault_validate_production_env_path "$ROOT" "$ENV_FILE"
+elif [[ -z "$ENV_FILE" ]]; then
+  if [[ -f "$ROOT/.env.kaggle" ]]; then
+    ENV_FILE="$ROOT/.env.kaggle"
+  elif [[ -f "$PROJECT_HOME/../ruby-envelope-vault-secrets/source-env.kaggle" ]]; then
+    ENV_FILE="$PROJECT_HOME/../ruby-envelope-vault-secrets/source-env.kaggle"
+  fi
+fi
+
+if [[ -n "$ENV_FILE" && -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+
+version="$(tr -d '[:space:]' < "$ROOT/VERSION")"
+current_target="missing"
+if [[ -e "$CURRENT_LINK" || -L "$CURRENT_LINK" ]]; then
+  current_target="$(readlink -f "$CURRENT_LINK" 2>/dev/null || printf 'unresolved')"
+fi
+
+source_role="development"
+if [[ "$current_target" == "$ROOT" ]]; then
+  source_role="live-current"
+elif [[ "$ROOT" == *"/RELEASE-"* ]]; then
+  source_role="release-not-current"
+fi
+
+health_status="unreachable"
+if command -v curl >/dev/null 2>&1; then
+  health_status="$(curl -sS -o /dev/null -w '%{http_code}' "$HEALTH_URL" 2>/dev/null || true)"
+  [[ -n "$health_status" ]] || health_status="unreachable"
+fi
+
+pg_status="unknown"
+pg_port="${PG_PORT:-${POSTGRES_PORT:-5432}}"
+if command -v pg_isready >/dev/null 2>&1; then
+  if pg_isready -h 127.0.0.1 -p "$pg_port" >/dev/null 2>&1; then
+    pg_status="ready"
+  else
+    pg_status="not-ready"
+  fi
+fi
+
+redis_status="unknown"
+redis_port="${REDIS_PORT:-6379}"
+if command -v redis-cli >/dev/null 2>&1; then
+  if [[ -n "${REDIS_PASSWORD:-}" ]]; then
+    reply="$(REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli -h 127.0.0.1 -p "$redis_port" PING 2>/dev/null || true)"
+  else
+    reply="$(redis-cli -h 127.0.0.1 -p "$redis_port" PING 2>/dev/null || true)"
+  fi
+  [[ "$reply" == "PONG" ]] && redis_status="ready" || redis_status="not-ready"
+fi
+
+printf 'SOURCE_ROOT=%s\n' "$ROOT"
+printf 'SOURCE_VERSION=%s\n' "$version"
+printf 'SOURCE_ROLE=%s\n' "$source_role"
+printf 'CURRENT_TARGET=%s\n' "$current_target"
+printf 'HEALTH_STATUS=%s\n' "$health_status"
+printf 'POSTGRES_STATUS=%s\n' "$pg_status"
+printf 'REDIS_STATUS=%s\n' "$redis_status"
+
+key_provider_status="unknown"
+key_provider_category="unknown"
+key_provider_name="unknown"
+key_provider_remote="unknown"
+if [[ -x "$ROOT/script/key-provider-status" ]]; then
+  set +e
+  key_provider_output="$("$ROOT/script/key-provider-status" 2>/dev/null)"
+  key_provider_exit=$?
+  set -e
+  key_provider_name="$(printf '%s\n' "$key_provider_output" | awk -F= '$1=="KEY_PROVIDER_NAME"{print $2}' | tail -1)"
+  key_provider_status="$(printf '%s\n' "$key_provider_output" | awk -F= '$1=="KEY_PROVIDER_STATUS"{print $2}' | tail -1)"
+  key_provider_category="$(printf '%s\n' "$key_provider_output" | awk -F= '$1=="KEY_PROVIDER_CATEGORY"{print $2}' | tail -1)"
+  key_provider_remote="$(printf '%s\n' "$key_provider_output" | awk -F= '$1=="KEY_PROVIDER_REMOTE"{print $2}' | tail -1)"
+  [[ -n "$key_provider_name" ]] || key_provider_name="unknown"
+  [[ -n "$key_provider_status" ]] || key_provider_status="unknown"
+  [[ -n "$key_provider_category" ]] || key_provider_category="unknown"
+  [[ -n "$key_provider_remote" ]] || key_provider_remote="unknown"
+else
+  key_provider_exit=1
+fi
+
+printf 'KEY_PROVIDER_NAME=%s\n' "$key_provider_name"
+printf 'KEY_PROVIDER_STATUS=%s\n' "$key_provider_status"
+printf 'KEY_PROVIDER_CATEGORY=%s\n' "$key_provider_category"
+printf 'KEY_PROVIDER_REMOTE=%s\n' "$key_provider_remote"
+printf 'RUNTIME_ROOT=%s\n' "$RUNTIME_ROOT"
+
+if [[ -n "${RELEASE_ARTIFACT_DIR:-}" ]]; then
+  printf 'EVIDENCE_ROOT=%s\n' "$RELEASE_ARTIFACT_DIR"
+else
+  printf 'EVIDENCE_ROOT=not-configured\n'
+fi
+
+result="PASS"
+[[ "$current_target" != "missing" && "$current_target" != "unresolved" ]] || result="FAIL"
+[[ "$health_status" == "200" ]] || result="FAIL"
+[[ "$pg_status" == "ready" ]] || result="FAIL"
+[[ "$redis_status" == "ready" ]] || result="FAIL"
+[[ "$key_provider_exit" -eq 0 && "$key_provider_status" == "ready" ]] || result="FAIL"
+
+printf 'OPERATOR_STATUS=%s\n' "$result"
+[[ "$result" == "PASS" ]]
