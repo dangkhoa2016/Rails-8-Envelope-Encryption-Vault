@@ -1,0 +1,395 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+ARTIFACT_DIR="${RELEASE_ARTIFACT_DIR:-$ROOT/tmp/release-artifacts}"
+OUT="${RELEASE_METADATA_OUT:-$ARTIFACT_DIR/RELEASE-METADATA.json}"
+PHASE="${RELEASE_PHASE:-prepromote}"
+VERIFY="${RELEASE_VERIFY_STATUS:-pass}"
+RESTORE="${ISOLATED_RESTORE_STATUS:-pass}"
+OFFHOST="${OFFHOST_ROUNDTRIP_STATUS:-pending}"
+MANUAL_ACCESSIBILITY_STATUS="${MANUAL_ACCESSIBILITY_STATUS:-pending}"
+INTEGRITY="${PUBLIC_PACKAGE_INTEGRITY_FILE:-$ARTIFACT_DIR/PUBLIC-PACKAGE-INTEGRITY.json}"
+SEALED_SOURCE_MANIFEST="${SEALED_SOURCE_MANIFEST_FILE:-$ARTIFACT_DIR/SEALED-SOURCE-SHA256SUMS.txt}"
+NEW_HOST_RECOVERY="${NEW_HOST_RECOVERY_FILE:-$ARTIFACT_DIR/NEW-HOST-RECOVERY-SUMMARY.json}"
+UX_PREFLIGHT="${UX_ACCESSIBILITY_EVIDENCE_FILE:-$ARTIFACT_DIR/UX-ACCESSIBILITY-PREFLIGHT.json}"
+HTTP_PREFLIGHT="${HTTP_SECURITY_EVIDENCE_FILE:-$ARTIFACT_DIR/HTTP-SECURITY-PREFLIGHT.json}"
+ERROR_PREFLIGHT="${ERROR_CORRELATION_EVIDENCE_FILE:-$ARTIFACT_DIR/ERROR-CORRELATION-PREFLIGHT.json}"
+LOGGING_PREFLIGHT="${LOGGING_REDACTION_EVIDENCE_FILE:-$ARTIFACT_DIR/LOGGING-REDACTION-PREFLIGHT.json}"
+CSRF_PREFLIGHT="${CSRF_ORIGIN_EVIDENCE_FILE:-$ARTIFACT_DIR/CSRF-ORIGIN-PREFLIGHT.json}"
+RATE_LIMIT_PREFLIGHT="${RATE_LIMIT_EVIDENCE_FILE:-$ARTIFACT_DIR/RATE-LIMIT-PREFLIGHT.json}"
+SESSION_LIFECYCLE_PREFLIGHT="${SESSION_LIFECYCLE_EVIDENCE_FILE:-$ARTIFACT_DIR/SESSION-LIFECYCLE-PREFLIGHT.json}"
+UPGRADE_PREFLIGHT="${UPGRADE_PREFLIGHT_EVIDENCE_FILE:-$ARTIFACT_DIR/UPGRADE-FROM-FIX46-PREFLIGHT.json}"
+AWS_KMS_FRESH_HOST="${AWS_KMS_FRESH_HOST_EVIDENCE_FILE:-$ARTIFACT_DIR/AWS-KMS-FRESH-HOST-SUMMARY.json}"
+PRIVATE_DR_ACCEPTANCE="${PRIVATE_DR_ACCEPTANCE_FILE:-$ARTIFACT_DIR/PRIVATE-DR-RESTORE-ACCEPTANCE.json}"
+PRIVATE_DR_PROVENANCE="${PRIVATE_DR_PROVENANCE_EVIDENCE_FILE:-$ARTIFACT_DIR/PRIVATE-DR-PROVENANCE.json}"
+PRODUCTION_DATABASE_PREPARE="${PRODUCTION_DATABASE_PREPARE_FILE:-$ARTIFACT_DIR/PRODUCTION-DATABASE-PREPARE.json}"
+PRODUCTION_DATABASE_CONTRACT="${PRODUCTION_DATABASE_CONTRACT_FILE:-$ARTIFACT_DIR/PRODUCTION-DATABASE-CONTRACT.json}"
+VERSION="$(tr -d '\r\n' < "$ROOT/VERSION")"
+mkdir -p "$(dirname "$OUT")"
+MANUAL_ACCESSIBILITY_STATUS="$MANUAL_ACCESSIBILITY_STATUS" python3 - "$ARTIFACT_DIR" "$OUT" "$VERSION" "$PHASE" "$VERIFY" "$RESTORE" "$OFFHOST" "$INTEGRITY" "$SEALED_SOURCE_MANIFEST" "$NEW_HOST_RECOVERY" "$UX_PREFLIGHT" "$HTTP_PREFLIGHT" "$ERROR_PREFLIGHT" "$LOGGING_PREFLIGHT" "$CSRF_PREFLIGHT" "$RATE_LIMIT_PREFLIGHT" "$SESSION_LIFECYCLE_PREFLIGHT" "$UPGRADE_PREFLIGHT" "$AWS_KMS_FRESH_HOST" "$PRIVATE_DR_ACCEPTANCE" "$PRIVATE_DR_PROVENANCE" "$PRODUCTION_DATABASE_PREPARE" "$PRODUCTION_DATABASE_CONTRACT" <<'PYJSON'
+import hashlib, json, os, sys
+from datetime import datetime, timezone
+from pathlib import Path
+art_dir=Path(sys.argv[1]); out=Path(sys.argv[2])
+version, phase, verify, restore, offhost=sys.argv[3:8]
+manual_accessibility_status=os.environ.get("MANUAL_ACCESSIBILITY_STATUS", "pending")
+if manual_accessibility_status not in ("pending", "complete_no_blockers"):
+    raise SystemExit(f"invalid manual accessibility status: {manual_accessibility_status}")
+integrity_path=Path(sys.argv[8])
+sealed_source_manifest=Path(sys.argv[9])
+new_host_recovery=Path(sys.argv[10])
+ux_preflight=Path(sys.argv[11])
+http_preflight=Path(sys.argv[12])
+error_preflight=Path(sys.argv[13])
+logging_preflight=Path(sys.argv[14])
+csrf_preflight=Path(sys.argv[15])
+rate_limit_preflight=Path(sys.argv[16])
+session_preflight=Path(sys.argv[17])
+upgrade_preflight=Path(sys.argv[18])
+aws_kms_fresh_host=Path(sys.argv[19])
+private_dr_acceptance=Path(sys.argv[20])
+private_dr_provenance=Path(sys.argv[21])
+production_database_prepare=Path(sys.argv[22])
+production_database_contract=Path(sys.argv[23])
+files=[
+ f"ruby-envelope-vault-v{version}-MIGRATION-BUNDLE.tar.gz",
+ f"ruby-envelope-vault-v{version}-SOURCE.zip",
+ f"ruby-envelope-vault-v{version}-SHOWCASE-SCREENSHOTS.tar.gz",
+ f"ruby-envelope-vault-{version}-PUBLIC-SHOWCASE.tar.gz",
+]
+hashes={}
+for name in files:
+    p=art_dir/name
+    if not p.is_file(): raise SystemExit(f"missing artifact: {p}")
+    h=hashlib.sha256()
+    with p.open('rb') as f:
+        for chunk in iter(lambda:f.read(1024*1024), b''): h.update(chunk)
+    hashes[name]=h.hexdigest()
+if not integrity_path.is_file():
+    raise SystemExit(f"missing public package integrity evidence: {integrity_path}")
+integrity=json.loads(integrity_path.read_text())
+if integrity.get("status") != "pass":
+    raise SystemExit("public package integrity evidence is not pass")
+if integrity.get("release_version") != version:
+    raise SystemExit(f"public package integrity release mismatch: {integrity.get('release_version')} != {version}")
+if not sealed_source_manifest.is_file():
+    raise SystemExit(f"missing sealed source manifest: {sealed_source_manifest}")
+manifest_lines=[line for line in sealed_source_manifest.read_text().splitlines() if line.strip()]
+manifest_sha=hashlib.sha256(sealed_source_manifest.read_bytes()).hexdigest()
+if not new_host_recovery.is_file():
+    raise SystemExit(f"missing new-host recovery evidence: {new_host_recovery}")
+new_host=json.loads(new_host_recovery.read_text())
+if new_host.get("release_version") != version:
+    raise SystemExit(f"new-host recovery release mismatch: {new_host.get('release_version')} != {version}")
+if new_host.get("project_doctor") != "pass" or new_host.get("health") != 200:
+    raise SystemExit("new-host recovery evidence is not pass")
+new_host_sha=hashlib.sha256(new_host_recovery.read_bytes()).hexdigest()
+if not ux_preflight.is_file():
+    raise SystemExit(f"missing UX/accessibility preflight evidence: {ux_preflight}")
+ux=json.loads(ux_preflight.read_text())
+if ux.get("release_version") != version:
+    raise SystemExit(f"UX/accessibility release mismatch: {ux.get('release_version')} != {version}")
+if ux.get("automated_status") != "pass":
+    raise SystemExit("UX/accessibility automated preflight is not pass")
+if ux.get("claims", {}).get("wcag_conformance") is not False:
+    raise SystemExit("UX/accessibility evidence must not claim WCAG conformance")
+if ux.get("claims", {}).get("manual_accessibility_complete") is not False:
+    raise SystemExit("manual accessibility must remain explicitly incomplete")
+ux_sha=hashlib.sha256(ux_preflight.read_bytes()).hexdigest()
+if not http_preflight.is_file(): raise SystemExit(f"missing HTTP security preflight evidence: {http_preflight}")
+http=json.loads(http_preflight.read_text())
+if http.get("release_version") != version or http.get("status") != "pass": raise SystemExit("HTTP security preflight evidence is not pass")
+if http.get("contains_secret_values") is not False: raise SystemExit("HTTP security evidence must exclude secret values")
+http_sha=hashlib.sha256(http_preflight.read_bytes()).hexdigest()
+if not error_preflight.is_file(): raise SystemExit(f"missing production error preflight evidence: {error_preflight}")
+error=json.loads(error_preflight.read_text())
+if error.get("release_version") != version or error.get("status") != "pass": raise SystemExit("production error preflight evidence is not pass")
+if [error.get("not_found"), error.get("unprocessable_entity"), error.get("internal_server_error")] != [404, 422, 500]:
+    raise SystemExit("production error status contract mismatch")
+if error.get("request_id_present") is not True or error.get("request_log_correlation") is not True:
+    raise SystemExit("production error request-id correlation is not pass")
+if error.get("stack_trace_exposed") is not False or error.get("local_filesystem_path_exposed") is not False:
+    raise SystemExit("production error response leaked internal diagnostics")
+if error.get("secret_values_exposed") is not False or error.get("contains_secret_values") is not False:
+    raise SystemExit("production error evidence must exclude secret values")
+error_sha=hashlib.sha256(error_preflight.read_bytes()).hexdigest()
+if not logging_preflight.is_file(): raise SystemExit(f"missing logging redaction preflight evidence: {logging_preflight}")
+logging=json.loads(logging_preflight.read_text())
+if logging.get("release_version") != version or logging.get("status") != "pass": raise SystemExit("logging redaction preflight evidence is not pass")
+if logging.get("probe_http_status") != 204: raise SystemExit("logging redaction probe status mismatch")
+if logging.get("request_id_log_correlation") is not True: raise SystemExit("logging redaction request-id correlation is not pass")
+if logging.get("plaintext_canary_values_exposed") is not False or logging.get("contains_secret_values") is not False: raise SystemExit("logging redaction evidence must exclude secret values")
+if logging.get("sensitive_parameter_count", 0) < 8: raise SystemExit("logging redaction sensitive parameter coverage is incomplete")
+logging_sha=hashlib.sha256(logging_preflight.read_bytes()).hexdigest()
+if not csrf_preflight.is_file(): raise SystemExit(f"missing CSRF origin preflight evidence: {csrf_preflight}")
+csrf=json.loads(csrf_preflight.read_text())
+if csrf.get("release_version") != version or csrf.get("status") != "pass": raise SystemExit("CSRF origin preflight evidence is not pass")
+if csrf.get("forgery_protection_origin_check") is not True: raise SystemExit("CSRF origin checking is not enabled")
+if csrf.get("same_origin_valid_token_status") not in (302,303): raise SystemExit("same-origin CSRF control failed")
+if [csrf.get("foreign_origin_status"),csrf.get("null_origin_status"),csrf.get("missing_token_status")] != [422,422,422]: raise SystemExit("cross-site CSRF rejection contract mismatch")
+if csrf.get("request_id_log_correlation") is not True: raise SystemExit("CSRF request-id correlation failed")
+if csrf.get("plaintext_canary_values_exposed") is not False or csrf.get("contains_secret_values") is not False: raise SystemExit("CSRF evidence must exclude secret values")
+csrf_sha=hashlib.sha256(csrf_preflight.read_bytes()).hexdigest()
+if not rate_limit_preflight.is_file(): raise SystemExit(f"missing rate-limit preflight evidence: {rate_limit_preflight}")
+rate=json.loads(rate_limit_preflight.read_text())
+if rate.get("release_version") != version or rate.get("status") != "pass": raise SystemExit("rate-limit preflight evidence is not pass")
+if rate.get("login_ip_limit") != 5 or rate.get("login_request_statuses") != [302,302,302,302,302,429]: raise SystemExit("login IP throttle contract mismatch")
+if rate.get("login_account_limit") != 10 or rate.get("login_account_statuses") != [302,302,302,302,302,302,302,302,302,302,429]: raise SystemExit("login account throttle contract mismatch")
+if rate.get("global_ip_limit") != 300 or rate.get("global_request_301_status") != 429: raise SystemExit("global throttle contract mismatch")
+if rate.get("retry_after_present") is not True or rate.get("cache_control_no_store") is not True: raise SystemExit("429 response headers are not hardened")
+if rate.get("throttled_response_sets_session_cookie") is not False: raise SystemExit("429 response created a session cookie")
+if rate.get("health_up_safelisted") is not True or rate.get("health_ready_safelisted") is not True: raise SystemExit("health safelist contract failed")
+if rate.get("request_id_log_correlation") is not True: raise SystemExit("rate-limit request-id correlation failed")
+if rate.get("plaintext_canary_values_exposed") is not False or rate.get("contains_secret_values") is not False: raise SystemExit("rate-limit evidence leaked secret values")
+rate_sha=hashlib.sha256(rate_limit_preflight.read_bytes()).hexdigest()
+if not session_preflight.is_file(): raise SystemExit(f"missing session lifecycle preflight evidence: {session_preflight}")
+session=json.loads(session_preflight.read_text())
+if session.get("release_version") != version or session.get("status") != "pass": raise SystemExit("session lifecycle preflight evidence is not pass")
+for key in ("login_creates_active_server_session","session_cookie_httponly","session_cookie_same_site_strict","session_cookie_has_expiry","reauthentication_rotates_session","pre_rotation_cookie_rejected","other_session_revocation","current_session_revocation_signs_out","idle_timeout_rejected_and_revoked","absolute_timeout_rejected_and_revoked"):
+    if session.get(key) is not True: raise SystemExit(f"session lifecycle contract failed: {key}")
+if session.get("plaintext_canary_values_exposed") is not False or session.get("contains_secret_values") is not False: raise SystemExit("session lifecycle evidence leaked secret values")
+session_sha=hashlib.sha256(session_preflight.read_bytes()).hexdigest()
+if not upgrade_preflight.is_file(): raise SystemExit(f"missing FIX46 upgrade preflight evidence: {upgrade_preflight}")
+upgrade=json.loads(upgrade_preflight.read_text())
+if upgrade.get("release_version") != version or upgrade.get("status") != "pass": raise SystemExit("upgrade preflight evidence is not pass")
+if upgrade.get("upgrade_base_version") != "0.1.2-FIX46": raise SystemExit("upgrade base is not FIX46")
+for key in ("migration_set_identical_to_base","db_migrate_idempotent","persistent_database_reused"):
+    if upgrade.get(key) is not True: raise SystemExit(f"upgrade contract failed: {key}")
+if upgrade.get("pending_migrations") is not False or upgrade.get("project_doctor") != "pass": raise SystemExit("upgrade readiness failed")
+if upgrade.get("contains_secret_values") is not False: raise SystemExit("upgrade evidence leaked secret values")
+upgrade_sha=hashlib.sha256(upgrade_preflight.read_bytes()).hexdigest()
+if not aws_kms_fresh_host.is_file():
+    raise SystemExit(f"missing AWS KMS fresh-host evidence: {aws_kms_fresh_host}")
+aws_kms=json.loads(aws_kms_fresh_host.read_text())
+if aws_kms.get("live_aws_ready") != "yes" or aws_kms.get("live_smoke") != "pass":
+    raise SystemExit("AWS KMS fresh-host live evidence is not pass")
+if aws_kms.get("synthetic_rehearsal") != "pass" or aws_kms.get("historical_decrypt") != "pass" or aws_kms.get("rewrap") != "pass":
+    raise SystemExit("AWS KMS fresh-host rehearsal contract is incomplete")
+if aws_kms.get("credential_values_recorded") is not False or aws_kms.get("key_ids_recorded") is not False:
+    raise SystemExit("AWS KMS fresh-host evidence contains sensitive values")
+aws_kms_sha=hashlib.sha256(aws_kms_fresh_host.read_bytes()).hexdigest()
+if not private_dr_acceptance.is_file():
+    raise SystemExit(f"missing private DR acceptance evidence: {private_dr_acceptance}")
+private_dr=json.loads(private_dr_acceptance.read_text())
+for key in ("outer_decrypt","internal_manifest","database_ciphertext","database_restore","aws_secret_intake","aws_active_alias_preflight","historical_decrypt"):
+    if private_dr.get(key) != "pass":
+        raise SystemExit(f"private DR acceptance contract failed: {key}")
+if private_dr.get("http_up") != 200 or private_dr.get("http_ready") != 200:
+    raise SystemExit("private DR HTTP readiness is not pass")
+for key in ("credential_values_recorded","key_ids_recorded","plaintext_recorded"):
+    if private_dr.get(key) is not False:
+        raise SystemExit(f"private DR evidence sensitive-data contract failed: {key}")
+private_dr_counts=private_dr.get("database_counts",{})
+for key in ("users","vault_items","vault_item_versions","key_registries","audit_events"):
+    if not isinstance(private_dr_counts.get(key), int):
+        raise SystemExit(f"private DR count missing: {key}")
+private_dr_sha=hashlib.sha256(private_dr_acceptance.read_bytes()).hexdigest()
+if not private_dr_provenance.is_file():
+    raise SystemExit(f"missing private DR provenance evidence: {private_dr_provenance}")
+provenance=json.loads(private_dr_provenance.read_text())
+if provenance.get("status") != "pass":
+    raise SystemExit("private DR provenance evidence is not pass")
+if provenance.get("snapshot_role") != "production-authority":
+    raise SystemExit("private DR provenance is not production authority")
+if provenance.get("target_release_version") != version:
+    raise SystemExit("private DR provenance release mismatch")
+if provenance.get("artifact") != private_dr.get("artifact"):
+    raise SystemExit("private DR provenance artifact mismatch")
+if provenance.get("database_counts") != private_dr_counts:
+    raise SystemExit("private DR provenance counts mismatch")
+if provenance.get("production_authority_confirmed") is not True:
+    raise SystemExit("private DR provenance authority is not confirmed")
+if provenance.get("source_equals_runtime_database") is not False:
+    raise SystemExit("private DR provenance points at the current runtime database")
+for key in ("contains_secret_values","credential_values_recorded","key_ids_recorded","plaintext_recorded"):
+    if provenance.get(key) is not False:
+        raise SystemExit(f"private DR provenance sensitive-data contract failed: {key}")
+private_dr_provenance_sha=hashlib.sha256(private_dr_provenance.read_bytes()).hexdigest()
+
+def stable_database_name(release_version):
+    base=release_version.split("-",1)[0]
+    parts=base.split(".")
+    if len(parts) not in (3,4) or any(not part.isdigit() for part in parts):
+        raise SystemExit("invalid release version for production database naming")
+    return "ruby_envelope_vault_production_v" + "_".join(parts)
+
+expected_production_database=stable_database_name(version)
+production_database_prepare_status="pending"
+production_database_contract_status="pending"
+production_database_name=None
+production_database_prepare_sha=None
+production_database_contract_sha=None
+
+if production_database_prepare.is_file():
+    prepare=json.loads(production_database_prepare.read_text())
+    if prepare.get("status") != "pass":
+        raise SystemExit("production database prepare evidence is not pass")
+    if prepare.get("release_version") != version:
+        raise SystemExit("production database prepare release mismatch")
+    if prepare.get("stable_name_contract") is not True:
+        raise SystemExit("production database prepare stable-name contract failed")
+    if prepare.get("database_name") != expected_production_database:
+        raise SystemExit("production database prepare name mismatch")
+    if prepare.get("database_counts") != private_dr_counts:
+        raise SystemExit("production database prepare counts mismatch")
+    for key in ("database_url_recorded","credential_values_recorded","key_ids_recorded","plaintext_recorded"):
+        if prepare.get(key) is not False:
+            raise SystemExit(f"production database prepare sensitive-data contract failed: {key}")
+    production_database_prepare_status="pass"
+    production_database_name=prepare.get("database_name")
+    production_database_prepare_sha=hashlib.sha256(production_database_prepare.read_bytes()).hexdigest()
+
+if production_database_contract.is_file():
+    contract=json.loads(production_database_contract.read_text())
+    if contract.get("status") != "pass":
+        raise SystemExit("production database live contract evidence is not pass")
+    if contract.get("release_version") != version:
+        raise SystemExit("production database live contract release mismatch")
+    if contract.get("stable_name_contract") is not True:
+        raise SystemExit("production database live stable-name contract failed")
+    if contract.get("expected_database_name") != expected_production_database:
+        raise SystemExit("production database live expected-name mismatch")
+    if contract.get("database_name") != expected_production_database:
+        raise SystemExit("production database live name mismatch")
+    for key in ("database_url_recorded","credential_values_recorded","contains_secret_values"):
+        if contract.get(key) is not False:
+            raise SystemExit(f"production database live sensitive-data contract failed: {key}")
+    production_database_contract_status="pass"
+    production_database_name=contract.get("database_name")
+    production_database_contract_sha=hashlib.sha256(production_database_contract.read_bytes()).hexdigest()
+
+if phase == "promoted":
+    if production_database_prepare_status != "pass":
+        raise SystemExit("promoted metadata requires production database prepare evidence")
+    if production_database_contract_status != "pass":
+        raise SystemExit("promoted metadata requires live production database contract evidence")
+
+data={
+ "schema_version":1,
+ "release_version":version,
+ "generated_at":datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+ "phase":phase,
+ "release_verify":verify,
+ "isolated_restore":restore,
+ "offhost_roundtrip":offhost,
+ "public_package_integrity": integrity["status"],
+ "public_package_links_checked": integrity["links_checked"],
+ "public_package_screenshots": integrity["screenshot_count"],
+ "public_package_root_files": integrity["root_file_count"],
+ "public_package_manifest_rows": integrity["manifest_rows"],
+ "sealed_source_integrity": "pass",
+ "sealed_source_file_count": len(manifest_lines),
+ "sealed_source_manifest_sha256": manifest_sha,
+ "new_host_recovery": "pass",
+ "new_host_bootstrap_mode": new_host.get("bootstrap_mode"),
+ "new_host_database_reused": new_host.get("database_reused"),
+ "new_host_postgres_reused": new_host.get("postgres_reused"),
+ "new_host_redis_reused": new_host.get("redis_reused"),
+ "new_host_recovery_summary_sha256": new_host_sha,
+ "ux_accessibility_preflight": "pass",
+ "ux_accessibility_manual_status": manual_accessibility_status,
+ "ux_accessibility_wcag_conformance_claimed": False,
+ "ux_accessibility_preflight_sha256": ux_sha,
+ "http_security_preflight": "pass",
+ "http_security_secret_values_absent": True,
+ "http_security_preflight_sha256": http_sha,
+ "production_error_preflight": "pass",
+ "production_error_status_404": 404,
+ "production_error_status_422": 422,
+ "production_error_status_500": 500,
+ "production_error_request_id_correlation": "pass",
+ "production_error_stack_trace_exposed": False,
+ "production_error_local_filesystem_path_exposed": False,
+ "production_error_secret_values_absent": True,
+ "production_error_preflight_sha256": error_sha,
+ "logging_redaction_preflight": "pass",
+ "logging_redaction_sensitive_parameter_count": logging.get("sensitive_parameter_count"),
+ "logging_redaction_request_id_correlation": "pass",
+ "logging_redaction_plaintext_canary_values_exposed": False,
+ "logging_redaction_secret_values_absent": True,
+ "logging_redaction_preflight_sha256": logging_sha,
+ "csrf_origin_preflight": "pass",
+ "csrf_origin_check_enabled": True,
+ "csrf_same_origin_valid_token_status": csrf.get("same_origin_valid_token_status"),
+ "csrf_foreign_origin_status": 422,
+ "csrf_null_origin_status": 422,
+ "csrf_missing_token_status": 422,
+ "csrf_request_id_log_correlation": "pass",
+ "csrf_secret_values_absent": True,
+ "csrf_origin_preflight_sha256": csrf_sha,
+ "rate_limit_preflight": "pass",
+ "rate_limit_login_ip_limit": 5,
+ "rate_limit_login_account_limit": 10,
+ "rate_limit_global_ip_limit": 300,
+ "rate_limit_throttled_status": 429,
+ "rate_limit_retry_after_present": True,
+ "rate_limit_cache_control_no_store": True,
+ "rate_limit_session_cookie_on_throttle": False,
+ "rate_limit_health_safelist": "pass",
+ "rate_limit_request_id_log_correlation": "pass",
+ "rate_limit_cache_store_class": rate.get("cache_store_class"),
+ "rate_limit_secret_values_absent": True,
+ "rate_limit_preflight_sha256": rate_sha,
+ "session_lifecycle_preflight": "pass",
+ "session_login_creation": "pass",
+ "session_cookie_httponly": True,
+ "session_cookie_same_site_strict": True,
+ "session_cookie_has_expiry": True,
+ "session_reauthentication_rotation": "pass",
+ "session_stale_cookie_rejection": "pass",
+ "session_other_revocation": "pass",
+ "session_current_revocation": "pass",
+ "session_idle_timeout_rejection": "pass",
+ "session_absolute_timeout_rejection": "pass",
+ "session_secret_values_absent": True,
+ "session_lifecycle_preflight_sha256": session_sha,
+ "upgrade_from_fix46_preflight": "pass",
+ "upgrade_base_version": upgrade.get("upgrade_base_version"),
+ "upgrade_migration_set_identical": True,
+ "upgrade_db_migrate_idempotent": True,
+ "upgrade_pending_migrations": False,
+ "upgrade_persistent_database_reused": True,
+ "upgrade_project_doctor": "pass",
+ "upgrade_secret_values_absent": True,
+ "upgrade_preflight_sha256": upgrade_sha,
+ "aws_kms_fresh_host_rehearsal": "pass",
+ "aws_kms_live_ready": True,
+ "aws_kms_live_smoke": "pass",
+ "aws_kms_historical_decrypt": "pass",
+ "aws_kms_rewrap": "pass",
+ "aws_kms_credential_values_recorded": False,
+ "aws_kms_key_ids_recorded": False,
+ "aws_kms_fresh_host_sha256": aws_kms_sha,
+ "private_dr_restore_acceptance": "pass",
+ "private_dr_http_up": 200,
+ "private_dr_http_ready": 200,
+ "private_dr_historical_decrypt": "pass",
+ "private_dr_database_counts": private_dr_counts,
+ "private_dr_credential_values_recorded": False,
+ "private_dr_key_ids_recorded": False,
+ "private_dr_plaintext_recorded": False,
+ "private_dr_acceptance_sha256": private_dr_sha,
+ "private_dr_provenance": "pass",
+ "private_dr_snapshot_role": provenance.get("snapshot_role"),
+ "private_dr_source_type": provenance.get("source_type"),
+ "private_dr_source_release_version": provenance.get("source_release_version"),
+ "private_dr_target_release_version": provenance.get("target_release_version"),
+ "private_dr_production_authority_confirmed": True,
+ "private_dr_source_equals_runtime_database": False,
+ "private_dr_provenance_sha256": private_dr_provenance_sha,
+ "production_database_prepare": production_database_prepare_status,
+ "production_database_live_contract": production_database_contract_status,
+ "production_database_expected_name": expected_production_database,
+ "production_database_name": production_database_name,
+ "production_database_stable_name_contract": production_database_prepare_status == "pass" and (phase != "promoted" or production_database_contract_status == "pass"),
+ "production_database_prepare_sha256": production_database_prepare_sha,
+ "production_database_contract_sha256": production_database_contract_sha,
+ "production_database_url_recorded": False,
+ "production_database_credential_values_recorded": False,
+ "artifact_sha256":hashes,
+ "promotion_performed": phase == "promoted",
+}
+out.write_text(json.dumps(data,sort_keys=True,indent=2)+"\n")
+PYJSON
+chmod 644 "$OUT"
+echo "RELEASE_METADATA=PASS path=$OUT"

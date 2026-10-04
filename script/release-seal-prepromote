@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+VERSION="$(tr -d '\r\n' < "$ROOT/VERSION")"
+RELEASE_NAME="${VERSION##*-}"
+ARTIFACT_DIR="${RELEASE_ARTIFACT_DIR:-$ROOT/tmp/release-artifacts}"
+SHOWCASE_DIR="${RELEASE_SHOWCASE_DIR:-$ROOT/tmp/release-showcase}"
+PUBLIC_DIR="${RELEASE_PUBLIC_DIR:-$ROOT/tmp/release-public}"
+REQUIRE_PRIVATE_DR="${RELEASE_REQUIRE_PRIVATE_DR:-1}"
+PRIVATE_DR_ARCHIVE="${RELEASE_PRIVATE_DR_ARCHIVE:-}"
+PRIVATE_DR_OUTER_KEY="${RELEASE_PRIVATE_DR_OUTER_KEY:-}"
+PRIVATE_DR_PROVENANCE_FILE="${RELEASE_PRIVATE_DR_PROVENANCE_FILE:-}"
+AWS_SECRET_FILE="${RELEASE_AWS_SECRET_FILE:-}"
+REQUIRE_OFFSITE_PREFLIGHT="${RELEASE_REQUIRE_OFFSITE_PREFLIGHT:-0}"
+OFFSITE_RCLONE_DEST="${RELEASE_OFFSITE_RCLONE_DEST:-}"
+OFFSITE_RCLONE_CONFIG="${RELEASE_RCLONE_CONFIG:-}"
+OFFSITE_RCLONE_PROVISION="${RELEASE_RCLONE_PROVISION:-1}"
+OFFSITE_PROBE_WRITE="${RELEASE_OFFSITE_PROBE_WRITE:-1}"
+mkdir -p "$ARTIFACT_DIR"
+rm -f "$ARTIFACT_DIR"/*
+cd "$ROOT"
+source ./activate-kaggle.sh >/dev/null
+echo "RELEASE_STAGE=activated"
+
+if [[ "$REQUIRE_OFFSITE_PREFLIGHT" == "1" ]]; then
+  echo "RELEASE_STAGE=offsite-preflight-begin"
+  [[ -n "$OFFSITE_RCLONE_DEST" && -n "$OFFSITE_RCLONE_CONFIG" ]] || {
+    echo "ERROR strict offsite preflight requires destination and rclone config" >&2
+    exit 1
+  }
+  offsite_args=(
+    --dest "$OFFSITE_RCLONE_DEST"
+    --config "$OFFSITE_RCLONE_CONFIG"
+    --evidence "$ARTIFACT_DIR/OFFSITE-CAPABILITY.json"
+  )
+  [[ "$OFFSITE_RCLONE_PROVISION" == "1" ]] && offsite_args+=(--provision)
+  [[ "$OFFSITE_PROBE_WRITE" == "1" ]] && offsite_args+=(--probe-write)
+  "$ROOT/script/offsite-capability-preflight" "${offsite_args[@]}"
+  echo "RELEASE_STAGE=offsite-preflight-pass"
+fi
+
+echo "RELEASE_STAGE=release-verify-begin"
+./script/release-verify
+echo "RELEASE_STAGE=release-verify-pass"
+UX_ACCESSIBILITY_EVIDENCE_OUT="$ARTIFACT_DIR/UX-ACCESSIBILITY-PREFLIGHT.json" UX_ACCESSIBILITY_LOG_OUT="$ARTIFACT_DIR/UX-ACCESSIBILITY-PREFLIGHT.log" "$ROOT/script/production-ux-accessibility-preflight"
+HTTP_SECURITY_EVIDENCE_OUT="$ARTIFACT_DIR/HTTP-SECURITY-PREFLIGHT.json" HTTP_SECURITY_LOG_OUT="$ARTIFACT_DIR/HTTP-SECURITY-PREFLIGHT.log" "$ROOT/script/production-http-security-preflight"
+ERROR_PREFLIGHT_EVIDENCE_OUT="$ARTIFACT_DIR/ERROR-CORRELATION-PREFLIGHT.json" ERROR_PREFLIGHT_LOG_OUT="$ARTIFACT_DIR/ERROR-CORRELATION-PREFLIGHT.log" "$ROOT/script/production-error-preflight"
+LOGGING_REDACTION_EVIDENCE_OUT="$ARTIFACT_DIR/LOGGING-REDACTION-PREFLIGHT.json" LOGGING_REDACTION_LOG_OUT="$ARTIFACT_DIR/LOGGING-REDACTION-PREFLIGHT.log" "$ROOT/script/production-logging-redaction-preflight"
+CSRF_ORIGIN_EVIDENCE_OUT="$ARTIFACT_DIR/CSRF-ORIGIN-PREFLIGHT.json" CSRF_ORIGIN_LOG_OUT="$ARTIFACT_DIR/CSRF-ORIGIN-PREFLIGHT.log" "$ROOT/script/production-csrf-origin-preflight"
+RATE_LIMIT_EVIDENCE_OUT="$ARTIFACT_DIR/RATE-LIMIT-PREFLIGHT.json" RATE_LIMIT_LOG_OUT="$ARTIFACT_DIR/RATE-LIMIT-PREFLIGHT.log" "$ROOT/script/production-rate-limit-preflight"
+SESSION_LIFECYCLE_EVIDENCE_OUT="$ARTIFACT_DIR/SESSION-LIFECYCLE-PREFLIGHT.json" SESSION_LIFECYCLE_LOG_OUT="$ARTIFACT_DIR/SESSION-LIFECYCLE-PREFLIGHT.log" "$ROOT/script/production-session-lifecycle-preflight"
+UPGRADE_PREFLIGHT_EVIDENCE_OUT="$ARTIFACT_DIR/UPGRADE-FROM-FIX46-PREFLIGHT.json" UPGRADE_PREFLIGHT_LOG_OUT="$ARTIFACT_DIR/UPGRADE-FROM-FIX46-PREFLIGHT.log" "$ROOT/script/upgrade-from-fix46-preflight"
+
+if [[ "$REQUIRE_PRIVATE_DR" == "1" ]]; then
+  [[ -n "$PRIVATE_DR_ARCHIVE" && -n "$PRIVATE_DR_OUTER_KEY" && -n "$PRIVATE_DR_PROVENANCE_FILE" && -n "$AWS_SECRET_FILE" ]] || {
+    echo "ERROR private DR release gate requires archive, outer key, provenance, and AWS inputs" >&2
+    exit 1
+  }
+  "$ROOT/script/private-dr-restore-acceptance"     --archive "$PRIVATE_DR_ARCHIVE"     --outer-key "$PRIVATE_DR_OUTER_KEY"     --aws-secret "$AWS_SECRET_FILE"     --evidence "$ARTIFACT_DIR/PRIVATE-DR-RESTORE-ACCEPTANCE.json"
+  "$ROOT/script/private-dr-provenance-preflight"     --archive "$PRIVATE_DR_ARCHIVE"     --provenance "$PRIVATE_DR_PROVENANCE_FILE"     --acceptance "$ARTIFACT_DIR/PRIVATE-DR-RESTORE-ACCEPTANCE.json"     --evidence "$ARTIFACT_DIR/PRIVATE-DR-PROVENANCE.json"
+fi
+
+if [[ "${RELEASE_REQUIRE_LIVE_AWS_KMS:-0}" == "1" ]]; then
+  [[ -n "$AWS_SECRET_FILE" ]] || { echo "ERROR AWS release input is required" >&2; exit 1; }
+  AWS_KMS_SECRET_FILE="$AWS_SECRET_FILE" AWS_KMS_FRESH_HOST_REQUIRE_LIVE=1 AWS_KMS_FRESH_HOST_SUMMARY_OUT="$ARTIFACT_DIR/AWS-KMS-FRESH-HOST-SUMMARY.json" "$ROOT/script/aws-kms-fresh-host-rehearsal"
+fi
+REV_ARTIFACT_DIR="$ARTIFACT_DIR" ./script/build-current-migration-bundle
+NEW_HOST_ACCEPTANCE_OUT="$ARTIFACT_DIR/NEW-HOST-RECOVERY-SUMMARY.json" "$ROOT/script/new-host-acceptance" "$ARTIFACT_DIR/ruby-envelope-vault-v${VERSION}-MIGRATION-BUNDLE.tar.gz"
+
+stage="$(mktemp -d)"; restore="$(mktemp -d)"
+trap 'rm -rf "$stage" "$restore"' EXIT
+name="ruby-envelope-vault-v${VERSION}"
+mkdir -p "$stage/$name"
+tar -C "$ROOT" --exclude=.git --exclude=.bundle --exclude=.env --exclude=.env.* --exclude=tmp --exclude=log --exclude=storage --exclude=vendor/bundle --exclude=public/assets --exclude=public/assets-dev --exclude='*.key' --exclude='*.pem' --exclude='*.agekey' -cf - . | tar -C "$stage/$name" -xf -
+( cd "$stage" && zip -qr "$ARTIFACT_DIR/${name}-SOURCE.zip" "$name" )
+chmod 600 "$ARTIFACT_DIR/${name}-SOURCE.zip"
+unzip -tq "$ARTIFACT_DIR/${name}-SOURCE.zip" >/dev/null
+if unzip -Z1 "$ARTIFACT_DIR/${name}-SOURCE.zip" | grep -E '(^|/)(\.env($|\.)|rclone\.conf$|.*\.(agekey|key|pem|dump)$|public/assets/)'; then echo SOURCE_ZIP_DENYLIST=FAIL >&2; exit 1; fi
+echo SOURCE_ZIP_DENYLIST=PASS
+
+SHOWCASE_OUTPUT="$SHOWCASE_DIR" ./script/capture-showcase
+tar -C "$(dirname "$SHOWCASE_DIR")" -czf "$ARTIFACT_DIR/${name}-SHOWCASE-SCREENSHOTS.tar.gz" "$(basename "$SHOWCASE_DIR")"
+chmod 600 "$ARTIFACT_DIR/${name}-SHOWCASE-SCREENSHOTS.tar.gz"
+rm -rf "$PUBLIC_DIR"
+SHOWCASE_DIR="$SHOWCASE_DIR" PUBLIC_SHOWCASE_OUTPUT_DIR="$PUBLIC_DIR" ./script/build-public-showcase
+cp "$PUBLIC_DIR/ruby-envelope-vault-${VERSION}-PUBLIC-SHOWCASE.tar.gz" "$ARTIFACT_DIR/"
+cp "$PUBLIC_DIR/PUBLIC-PACKAGE-INTEGRITY.json" "$ARTIFACT_DIR/"
+chmod 600 "$ARTIFACT_DIR/ruby-envelope-vault-${VERSION}-PUBLIC-SHOWCASE.tar.gz"
+chmod 644 "$ARTIFACT_DIR/PUBLIC-PACKAGE-INTEGRITY.json"
+
+bundle="$ARTIFACT_DIR/${name}-MIGRATION-BUNDLE.tar.gz"
+mkdir -p "$restore/unpack" "$restore/install" "$restore/secrets"
+tar -C "$restore/unpack" -xzf "$bundle"
+bundle_dir="$(find "$restore/unpack" -mindepth 1 -maxdepth 1 -type d | head -1)"
+INSTALL_ROOT="$restore/install" SECRET_ROOT="$restore/secrets" "$bundle_dir/restore-to-linux.sh" >/dev/null
+test "$(cat "$restore/install/$RELEASE_NAME/VERSION")" = "$VERSION"
+test "$(stat -c %a "$restore/secrets")" = 700
+test "$(stat -c %a "$restore/secrets/recovery.agekey")" = 600
+echo "${RELEASE_NAME}_ISOLATED_RESTORE=PASS"
+
+cd "$ARTIFACT_DIR"
+sha256sum "${name}-MIGRATION-BUNDLE.tar.gz" "${name}-SOURCE.zip" "${name}-SHOWCASE-SCREENSHOTS.tar.gz" "ruby-envelope-vault-${VERSION}-PUBLIC-SHOWCASE.tar.gz" > SHA256SUMS.txt
+sha256sum -c SHA256SUMS.txt
+"$ROOT/script/sealed-source-integrity" create "$ARTIFACT_DIR/SEALED-SOURCE-SHA256SUMS.txt"
+"$ROOT/script/sealed-source-integrity" verify "$ARTIFACT_DIR/SEALED-SOURCE-SHA256SUMS.txt"
+sha256sum "$ARTIFACT_DIR/SEALED-SOURCE-SHA256SUMS.txt" > "$ARTIFACT_DIR/SEALED-SOURCE-SHA256SUMS.txt.sha256"
+chmod 600 "$ARTIFACT_DIR/SEALED-SOURCE-SHA256SUMS.txt.sha256"
+RELEASE_ARTIFACT_DIR="$ARTIFACT_DIR" RELEASE_PHASE=prepromote RELEASE_VERIFY_STATUS=pass ISOLATED_RESTORE_STATUS=pass OFFHOST_ROUNDTRIP_STATUS=pending RELEASE_METADATA_OUT="$ARTIFACT_DIR/RELEASE-METADATA.json" "$ROOT/script/release-metadata"
+echo PREPROMOTE_SEAL=PASS
+echo PROMOTION_REQUIRED=yes
