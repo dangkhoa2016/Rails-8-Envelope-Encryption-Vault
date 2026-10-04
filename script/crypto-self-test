@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+bundle exec ruby -Itest -e 'Dir["test/services/crypto/**/*_test.rb"].sort.concat(Dir["test/services/key_providers/**/*_test.rb"].sort).each { |f| require File.expand_path(f) }'

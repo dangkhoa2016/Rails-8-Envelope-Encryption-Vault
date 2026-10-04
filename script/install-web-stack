@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+[[ "${EUID}" -eq 0 ]] || { echo "ERROR: run as root" >&2; exit 1; }
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ENV_FILE="${OPS_ENV_FILE:-/etc/ruby-envelope-vault/ops.env}"
+APP_USER="${OPS_SERVICE_USER:-ruby-vault}"
+APP_GROUP="${OPS_SERVICE_GROUP:-ruby-vault}"
+
+[[ -r "$ENV_FILE" ]] || { echo "ERROR: unreadable $ENV_FILE" >&2; exit 1; }
+set -a
+. "$ENV_FILE"
+set +a
+: "${APP_URL:?APP_URL required in $ENV_FILE}"
+: "${APP_HOSTS:?APP_HOSTS required in $ENV_FILE}"
+
+HOST="$(python3 - "$APP_URL" <<'PY'
+import sys, urllib.parse
+u=urllib.parse.urlparse(sys.argv[1])
+if u.scheme != "https" or not u.hostname:
+    raise SystemExit("APP_URL must be https://<host>")
+print(u.hostname)
+PY
+)"
+
+command -v caddy >/dev/null || { echo "ERROR: caddy missing" >&2; exit 1; }
+id "$APP_USER" >/dev/null
+
+install -d -o "$APP_USER" -g "$APP_GROUP" -m 0755 "$ROOT/app/assets/builds" "$ROOT/public" "$ROOT/public/assets"
+chown -R "$APP_USER:$APP_GROUP" "$ROOT/app/assets/builds" "$ROOT/public"
+
+export PATH="${OPS_POSTGRES_BIN:-/usr/lib/postgresql/17/bin}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+runuser -u "$APP_USER" -- env \
+  PATH="$PATH" RAILS_ENV=production HOME=/var/lib/ruby-envelope-vault \
+  DATABASE_URL="$DATABASE_URL" SECRET_KEY_BASE="$SECRET_KEY_BASE" \
+  VAULT_KEY_PROVIDER="$VAULT_KEY_PROVIDER" VAULT_ACTIVE_KEK_ID="$VAULT_ACTIVE_KEK_ID" VAULT_KEK_DIR="$VAULT_KEK_DIR" \
+  APP_HOSTS="$APP_HOSTS" DEMO_MODE="$DEMO_MODE" FORCE_SSL="$FORCE_SSL" \
+  ALLOW_SIGNUPS="$ALLOW_SIGNUPS" REQUIRE_MFA="$REQUIRE_MFA" REAUTH_ON_REVEAL="$REAUTH_ON_REVEAL" \
+  bundle exec rails assets:precompile
+
+install -D -m 0644 "$ROOT/ops/puma/production.rb" /etc/ruby-envelope-vault/puma.rb
+install -D -m 0644 "$ROOT/ops/systemd/ruby-envelope-vault-web.service" /etc/systemd/system/ruby-envelope-vault-web.service
+
+sed "s/__APP_HOST__/$HOST/g" "$ROOT/ops/caddy/Caddyfile.example" > /etc/caddy/Caddyfile
+caddy validate --config /etc/caddy/Caddyfile
+
+systemctl daemon-reload
+systemctl enable ruby-envelope-vault-web.service caddy.service
+systemctl restart ruby-envelope-vault-web.service
+systemctl restart caddy.service
+
+install -m 0755 "$ROOT/script/https-acceptance" /usr/local/sbin/revault-https-acceptance
+install -m 0755 "$ROOT/script/create-owner-production" /usr/local/sbin/revault-create-owner
+
+echo "WEB_STACK_INSTALL=PASS host=$HOST"

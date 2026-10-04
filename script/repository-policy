@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+status=0
+fail() { echo "FAIL: $*" >&2; status=1; }
+
+forbidden_names=(
+  "config/master.key"
+  ".env"
+  "id_rsa"
+  "id_ed25519"
+)
+for name in "${forbidden_names[@]}"; do
+  [ ! -e "$name" ] || fail "forbidden sensitive file exists: $name"
+done
+
+if find . \
+  -path './.git' -prune -o \
+  -path './tmp' -prune -o \
+  -path './log' -prune -o \
+  -path './storage' -prune -o \
+  -path './.local' -prune -o \
+  -path './vendor' -prune -o \
+  -type f \( -name '*.agekey' -o -name 'kek-*.key' -o -name '*.pem' \) -print | grep -q .; then
+  fail "key-like files were found in the repository tree"
+fi
+
+required_ignores=(
+  '/config/master.key'
+  '.env'
+  '/.local'
+)
+for pattern in "${required_ignores[@]}"; do
+  grep -Fxq "$pattern" .gitignore || fail ".gitignore is missing $pattern"
+done
+
+if grep -REnI \
+  --exclude='Gemfile.lock' --exclude='README.md' --exclude='*.md' \
+  --exclude-dir='.git' --exclude-dir='tmp' --exclude-dir='log' --exclude-dir='storage' \
+  --exclude-dir='.local' --exclude-dir='vendor' \
+  '(BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9]{20,})' . \
+  >/tmp/revault-secret-scan.txt 2>/dev/null; then
+  cat /tmp/revault-secret-scan.txt >&2
+  fail "possible committed secret material detected"
+fi
+rm -f /tmp/revault-secret-scan.txt
+
+[ "$status" -eq 0 ] && echo "PASS repository policy"
+exit "$status"

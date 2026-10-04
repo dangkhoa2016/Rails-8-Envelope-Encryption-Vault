@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = "bundle" ] || [ "${1:-}" = "bin/rails" ]; then
+  bin/rails db:prepare
+fi
+exec "$@"

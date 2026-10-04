@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUBY_VERSION="$(cat "$ROOT/.ruby-version")"
+if ! command -v mise >/dev/null 2>&1; then
+  echo "mise is not installed. Install it from https://mise.jdx.dev/ then rerun this script." >&2
+  exit 1
+fi
+mise install "ruby@$RUBY_VERSION"
+mise use "ruby@$RUBY_VERSION"
+exec "$ROOT/bin/bootstrap"
