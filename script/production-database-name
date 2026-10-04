@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+version="${1:-$(tr -d '\r\n' < "$ROOT/VERSION")}"
+base="${version%%-*}"
+
+[[ "$base" =~ ^[0-9]+(\.[0-9]+){2,3}$ ]] || {
+  echo "PRODUCTION_DATABASE_NAME=FAIL reason=unsupported-version" >&2
+  exit 2
+}
+
+normalized="${base//./_}"
+name="ruby_envelope_vault_production_v${normalized}"
+
+(( ${#name} <= 63 )) || {
+  echo "PRODUCTION_DATABASE_NAME=FAIL reason=name-too-long" >&2
+  exit 2
+}
+
+printf '%s\n' "$name"

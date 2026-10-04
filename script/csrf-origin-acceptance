@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ENV_FILE="${OPS_ENV_FILE:-/etc/ruby-envelope-vault/ops.env}"
+set -a
+. "$ENV_FILE"
+set +a
+BASE="${APP_URL%/}"
+JAR="$(mktemp)"
+HTML="$(mktemp)"
+HDR="$(mktemp)"
+trap 'rm -f "$JAR" "$HTML" "$HDR"' EXIT
+
+curl -fsS -c "$JAR" "$BASE/session/new" -o "$HTML"
+TOKEN="$(python3 - "$HTML" <<'PY'
+import re,sys
+s=open(sys.argv[1]).read()
+m=re.search(r'name="csrf-token" content="([^"]+)"', s)
+if not m:
+    raise SystemExit(2)
+print(m.group(1))
+PY
+)"
+
+valid="$(curl -sS -b "$JAR" -c "$JAR" -D "$HDR" -o /dev/null -w '%{http_code}'   -H 'Origin: null' -X POST "$BASE/session"   --data-urlencode "authenticity_token=$TOKEN"   --data-urlencode 'email_address=csrf-probe@example.invalid'   --data-urlencode 'password=not-a-real-password')"
+
+invalid="$(curl -sS -b "$JAR" -o /dev/null -w '%{http_code}'   -H 'Origin: null' -X POST "$BASE/session"   --data-urlencode 'authenticity_token=invalid'   --data-urlencode 'email_address=csrf-probe@example.invalid'   --data-urlencode 'password=not-a-real-password')"
+
+[[ "$valid" = 302 ]] || { echo "FAIL valid_csrf_origin_null http=$valid"; exit 1; }
+[[ "$invalid" = 422 ]] || { echo "FAIL invalid_csrf_not_rejected http=$invalid"; exit 1; }
+echo "PASS valid_csrf_origin_null http=$valid"
+echo "PASS invalid_csrf_rejected http=$invalid"
+echo "CSRF_ORIGIN_ACCEPTANCE=PASS"

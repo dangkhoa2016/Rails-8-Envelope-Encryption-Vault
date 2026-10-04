@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+PRODUCTION_BIND="${PRODUCTION_BIND:-127.0.0.1}"
+PRODUCTION_PORT="${PRODUCTION_PORT:-3000}"
+
+# Activate only tool/runtime paths. Explicitly suppress DEV .env fallback.
+export ENV_FILE=/dev/null
+# shellcheck disable=SC1091
+source "$ROOT/activate-runtime.sh" >/dev/null
+
+# shellcheck disable=SC1091
+source "$ROOT/script/lib/production-env.sh"
+revault_load_production_env "$ROOT"
+
+export RAILS_ENV=production
+export PORT="$PRODUCTION_PORT"
+
+: "${DATABASE_URL:?DATABASE_URL is required by production env}"
+
+database_contract_mode="${PRODUCTION_DATABASE_CONTRACT_MODE:-stable}"
+case "$database_contract_mode" in
+  stable)
+    "$ROOT/script/production-database-contract"
+    ;;
+  isolated)
+    printf 'PRODUCTION_DATABASE_CONTRACT=SKIP mode=isolated\n'
+    ;;
+  *)
+    printf 'ERROR unsupported PRODUCTION_DATABASE_CONTRACT_MODE=%s\n' "$database_contract_mode" >&2
+    exit 1
+    ;;
+esac
+: "${SECRET_KEY_BASE:?SECRET_KEY_BASE is required by production env}"
+: "${VAULT_KEY_PROVIDER:?VAULT_KEY_PROVIDER is required by production env}"
+: "${VAULT_ACTIVE_KEK_ID:?VAULT_ACTIVE_KEK_ID is required by production env}"
+: "${APP_HOSTS:?APP_HOSTS is required by production env}"
+
+printf 'PRODUCTION_ENV_SOURCE=external\n'
+printf 'PRODUCTION_ENV_PATH=%s\n' "$PRODUCTION_ENV_FILE"
+printf 'PRODUCTION_KEY_PROVIDER=%s\n' "$VAULT_KEY_PROVIDER"
+printf 'PRODUCTION_START=rails bind=%s port=%s\n' "$PRODUCTION_BIND" "$PRODUCTION_PORT"
+
+cd "$ROOT"
+pidfile="tmp/pids/server-$PRODUCTION_PORT.pid"
+if [[ -f "$pidfile" ]]; then
+  existing_pid="$(tr -d '[:space:]' < "$pidfile")"
+  if [[ "$existing_pid" =~ ^[0-9]+$ ]] && kill -0 "$existing_pid" 2>/dev/null; then
+    printf 'ERROR production server already running for pidfile %s\n' "$pidfile" >&2
+    exit 1
+  fi
+  rm -f "$pidfile"
+fi
+
+exec bin/rails server -b "$PRODUCTION_BIND" -p "$PRODUCTION_PORT" -P "$pidfile"

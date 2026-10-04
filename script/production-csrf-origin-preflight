@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+OUT="${CSRF_ORIGIN_EVIDENCE_OUT:-$ROOT/tmp/release-artifacts/CSRF-ORIGIN-PREFLIGHT.json}"
+LOG="${CSRF_ORIGIN_LOG_OUT:-$ROOT/tmp/release-artifacts/CSRF-ORIGIN-PREFLIGHT.log}"
+VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
+tmp="$(mktemp -d)"
+server_pid=""
+
+cleanup() {
+  if [[ -n "$server_pid" ]]; then
+    kill "$server_pid" 2>/dev/null || true
+    for _ in $(seq 1 30); do
+      kill -0 "$server_pid" 2>/dev/null || break
+      sleep 0.1
+    done
+    if kill -0 "$server_pid" 2>/dev/null; then
+      kill -9 "$server_pid" 2>/dev/null || true
+    fi
+    wait "$server_pid" 2>/dev/null || true
+  fi
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+
+port="$(python3 - <<'PY'
+import socket
+for p in range(3500, 3600):
+    s=socket.socket()
+    try: s.bind(("127.0.0.1", p))
+    except OSError: s.close(); continue
+    s.close(); print(p); break
+else: raise SystemExit("no free CSRF preflight port")
+PY
+)"
+base="http://127.0.0.1:$port"
+mkdir -p "$(dirname "$OUT")" "$(dirname "$LOG")"
+cd "$ROOT"
+source ./activate-kaggle.sh >/dev/null
+
+APP_HOSTS=127.0.0.1,localhost DEMO_MODE=true FORCE_SSL=false ASSUME_SSL=false RAILS_ENV=production PORT="$port" bin/rails server -b 127.0.0.1 -p "$port" >"$tmp/server.log" 2>&1 &
+server_pid=$!
+
+for _ in $(seq 1 40); do
+  if curl -fsS -o /dev/null "$base/up"; then
+    break
+  fi
+  if ! kill -0 "$server_pid" 2>/dev/null; then
+    tail -n 80 "$tmp/server.log" >&2
+    exit 1
+  fi
+  sleep 0.5
+done
+
+curl -sS -c "$tmp/cookies" "$base/session/new" >"$tmp/login.html"
+token="$(python3 - "$tmp/login.html" <<'PY'
+import html, re, sys
+text=open(sys.argv[1], encoding="utf-8").read()
+m=re.search(r'<meta[^>]+name=["\']csrf-token["\'][^>]+content=["\']([^"\']+)["\']', text)
+if not m:
+    m=re.search(r'<input[^>]+name=["\']authenticity_token["\'][^>]+value=["\']([^"\']+)["\']', text)
+if not m: raise SystemExit("CSRF token not found")
+print(html.unescape(m.group(1)))
+PY
+)"
+probe_email="fix44-csrf-probe@example.invalid"
+probe_password="FIX44_CSRF_PASSWORD_CANARY_91e2"
+
+request_case() {
+  local name="$1" origin="$2" csrf="$3" rid="$4"
+  local -a args=(
+    -sS -D "$tmp/$name.headers" -o "$tmp/$name.body" -w "%{http_code}"
+    -b "$tmp/cookies" -c "$tmp/cookies"
+   
+    -H "X-Request-Id: $rid"
+  )
+  if [[ "$origin" != "__ABSENT__" ]]; then args+=( -H "Origin: $origin" ); fi
+  args+=( --data-urlencode "email_address=$probe_email" --data-urlencode "password=$probe_password" )
+  if [[ "$csrf" == "yes" ]]; then args+=( --data-urlencode "authenticity_token=$token" ); fi
+  curl "${args[@]}" "$base/session"
+}
+
+same_status="$(request_case same_origin "$base" yes fix44-csrf-same-origin)"
+foreign_status="$(request_case foreign_origin "https://foreign-origin.invalid" yes fix44-csrf-foreign-origin)"
+null_status="$(request_case null_origin "null" yes fix44-csrf-null-origin)"
+missing_status="$(request_case missing_token "$base" no fix44-csrf-missing-token)"
+
+VERSION="$VERSION" BASE="$base" SAME_STATUS="$same_status" FOREIGN_STATUS="$foreign_status" NULL_STATUS="$null_status" MISSING_STATUS="$missing_status" PROBE_EMAIL="$probe_email" PROBE_PASSWORD="$probe_password" python3 - "$tmp" "$OUT" "$LOG" <<'PY'
+import json, os, sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+tmp, out, log = map(Path, sys.argv[1:4])
+statuses={
+    "same_origin":int(os.environ["SAME_STATUS"]),
+    "foreign_origin":int(os.environ["FOREIGN_STATUS"]),
+    "null_origin":int(os.environ["NULL_STATUS"]),
+    "missing_token":int(os.environ["MISSING_STATUS"]),
+}
+if statuses["same_origin"] not in (302,303):
+    raise SystemExit(f"same-origin valid CSRF request rejected: {statuses['same_origin']}")
+for key in ("foreign_origin","null_origin","missing_token"):
+    if statuses[key] != 422:
+        raise SystemExit(f"{key} expected 422, got {statuses[key]}")
+
+server_log=(tmp/"server.log").read_text(errors="replace")
+request_ids={
+    "same_origin":"fix44-csrf-same-origin",
+    "foreign_origin":"fix44-csrf-foreign-origin",
+    "null_origin":"fix44-csrf-null-origin",
+    "missing_token":"fix44-csrf-missing-token",
+}
+for name,rid in request_ids.items():
+    if rid not in server_log:
+        raise SystemExit(f"request id missing from log: {name}")
+
+for secret in (os.environ["PROBE_EMAIL"], os.environ["PROBE_PASSWORD"]):
+    if secret in server_log:
+        raise SystemExit("CSRF preflight canary leaked in production log")
+for name in ("foreign_origin","null_origin","missing_token"):
+    body=(tmp/f"{name}.body").read_text(errors="replace")
+    if "Request could not be processed" not in body:
+        raise SystemExit(f"{name} did not render branded 422")
+    if any(x in body for x in ("ActionController::", "InvalidAuthenticityToken", "Traceback")):
+        raise SystemExit(f"{name} leaked internal CSRF diagnostics")
+data={
+    "schema_version":1,
+    "release_version":os.environ["VERSION"],
+    "generated_at":datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "status":"pass",
+    "forgery_protection_origin_check":True,
+    "same_origin_valid_token_status":statuses["same_origin"],
+    "foreign_origin_status":statuses["foreign_origin"],
+    "null_origin_status":statuses["null_origin"],
+    "missing_token_status":statuses["missing_token"],
+    "request_id_log_correlation":True,
+    "plaintext_canary_values_exposed":False,
+    "internal_csrf_diagnostics_exposed":False,
+    "contains_secret_values":False,
+}
+out.write_text(json.dumps(data, sort_keys=True, indent=2)+"\n")
+out.chmod(0o644)
+summary=[
+    f"release_version={data['release_version']}",
+    "CSRF_ORIGIN_PREFLIGHT=PASS",
+    f"same_origin_valid_token_status={data['same_origin_valid_token_status']}",
+    "foreign_origin_rejected=PASS",
+    "null_origin_rejected=PASS",
+    "missing_token_rejected=PASS",
+    "request_id_log_correlation=PASS",
+    "plaintext_canary_values_exposed=NO",
+    "internal_csrf_diagnostics_exposed=NO",
+    "evidence_contains_secret_values=NO",
+]
+log.write_text("\n".join(summary)+"\n")
+log.chmod(0o644)
+PY
+
+echo "CSRF_ORIGIN_PREFLIGHT=PASS evidence=$OUT"
+echo "CSRF_SECRET_VALUES=ABSENT"

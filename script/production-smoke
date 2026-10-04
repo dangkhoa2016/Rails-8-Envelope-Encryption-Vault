@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+url="${APP_URL:?Set APP_URL, e.g. https://vault.example.com}"
+headers="$(mktemp)"
+page_headers="$(mktemp)"
+trap 'rm -f "$headers" "$page_headers"' EXIT
+
+curl -fsS -D "$headers" -o /dev/null "$url/ready"
+grep -qi '^strict-transport-security:' "$headers" || { echo 'FAIL missing HSTS'; exit 1; }
+grep -qi '^x-content-type-options: nosniff' "$headers" || { echo 'FAIL missing nosniff'; exit 1; }
+grep -qi '^x-frame-options: DENY' "$headers" || { echo 'FAIL missing frame deny'; exit 1; }
+grep -qi '^content-security-policy:' "$headers" || { echo 'FAIL missing CSP'; exit 1; }
+
+curl -fsS -D "$page_headers" -o /dev/null "$url/session/new"
+grep -qi '^cache-control:.*no-store' "$page_headers" || { echo 'FAIL dynamic auth page is cacheable'; exit 1; }
+grep -qi '^referrer-policy: same-origin' "$page_headers" || { echo 'FAIL missing same-origin referrer policy'; exit 1; }
+grep -qi '^cross-origin-opener-policy: same-origin' "$page_headers" || { echo 'FAIL missing COOP'; exit 1; }
+
+echo 'PASS production HTTPS/security-header/cache-control smoke'

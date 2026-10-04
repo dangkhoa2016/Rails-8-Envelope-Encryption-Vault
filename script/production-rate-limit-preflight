@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+OUT="${RATE_LIMIT_EVIDENCE_OUT:-$ROOT/tmp/release-artifacts/RATE-LIMIT-PREFLIGHT.json}"
+LOG="${RATE_LIMIT_LOG_OUT:-$ROOT/tmp/release-artifacts/RATE-LIMIT-PREFLIGHT.log}"
+VERSION="$(tr -d "[:space:]" < "$ROOT/VERSION")"
+tmp="$(mktemp -d)"; server_pid=""
+cleanup(){ if [[ -n "$server_pid" ]]; then kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true; fi; rm -rf "$tmp"; }
+trap cleanup EXIT
+port="$(python3 - <<'PY'
+import socket
+for p in range(3600,3700):
+ s=socket.socket()
+ try:s.bind(("127.0.0.1",p))
+ except OSError:s.close();continue
+ s.close();print(p);break
+PY
+)"
+base="http://127.0.0.1:$port"
+mkdir -p "$(dirname "$OUT")" "$(dirname "$LOG")"
+cd "$ROOT"; source ./activate-kaggle.sh >/dev/null
+RAILS_ENV=production bin/rails runner 'Rack::Attack.cache.store.clear' >/dev/null
+APP_HOSTS=127.0.0.1,localhost DEMO_MODE=true FORCE_SSL=false ASSUME_SSL=false RAILS_ENV=production PORT="$port" bin/rails server -b 127.0.0.1 -p "$port" >"$tmp/server.log" 2>&1 &
+server_pid=$!
+for _ in $(seq 1 40); do curl -fsS -o /dev/null "$base/up" && break; kill -0 "$server_pid" 2>/dev/null || { tail -n 80 "$tmp/server.log" >&2; exit 1; }; sleep .5; done
+curl -sS -c "$tmp/cookies" "$base/session/new" >"$tmp/login.html"
+token="$(python3 - "$tmp/login.html" <<'PY'
+import html,re,sys
+t=open(sys.argv[1]).read(); m=re.search(r'<meta[^>]+name=["\\\']csrf-token["\\\'][^>]+content=["\\\']([^"\\\']+)',t)
+if not m: raise SystemExit("csrf token missing")
+print(html.unescape(m.group(1)))
+PY
+)"
+run_tag="${RATE_LIMIT_TEST_TAG:-$$-$(date +%s%N)}"
+login_ip="198.18.$(( ($$ / 200) % 200 + 1 )).$(( $$ % 200 + 1 ))"
+global_ip="192.0.2.$(( $$ % 200 + 1 ))"
+email="FIX45-RateLimit-${run_tag}@Example.Invalid"; password="FIX45_RATE_LIMIT_PASSWORD_CANARY"
+account_email="target-${run_tag}@example.invalid"
+account_email_upper="$(printf '%s' "$account_email" | tr '[:lower:]' '[:upper:]')"
+: > "$tmp/statuses"
+for i in $(seq 1 6); do code="$(curl -sS -D "$tmp/login-$i.headers" -o "$tmp/login-$i.body" -w "%{http_code}" -b "$tmp/cookies" -c "$tmp/cookies" -H "Origin: $base" -H "X-Forwarded-For: $login_ip" -H "X-Request-Id: fix45-login-$i" --data-urlencode "email_address=$email" --data-urlencode "password=$password" --data-urlencode "authenticity_token=$token" "$base/session")"; echo "$code" >> "$tmp/statuses"; done
+for i in $(seq 1 8); do curl -sS -o /dev/null -w "%{http_code}\n" "$base/up"; done > "$tmp/up"
+for i in $(seq 1 8); do curl -sS -o /dev/null -w "%{http_code}\n" "$base/ready"; done > "$tmp/ready"
+RAILS_ENV=production bin/rails runner 'Rack::Attack.cache.store.clear' >/dev/null
+: > "$tmp/account-statuses"
+for i in $(seq 1 10); do
+  ip="198.51.100.$i"
+  code="$(curl -sS -o /dev/null -w "%{http_code}" -b "$tmp/cookies" -c "$tmp/cookies" -H "Origin: $base" -H "X-Forwarded-For: $ip" --data-urlencode "email_address=  $account_email_upper  " --data-urlencode "password=$password" --data-urlencode "authenticity_token=$token" "$base/session")"
+  echo "$code" >> "$tmp/account-statuses"
+done
+code="$(curl -sS -D "$tmp/account-11.headers" -o "$tmp/account-11.body" -w "%{http_code}" -b "$tmp/cookies" -c "$tmp/cookies" -H "Origin: $base" -H "X-Forwarded-For: 203.0.113.50" -H "X-Request-Id: fix45-account-11" --data-urlencode "email_address=$account_email" --data-urlencode "password=$password" --data-urlencode "authenticity_token=$token" "$base/session")"
+echo "$code" >> "$tmp/account-statuses"
+global_ip="192.0.2.$(( $$ % 200 + 1 ))"
+GLOBAL_IP="$global_ip" RAILS_ENV=production bin/rails runner '
+throttle = Rack::Attack.throttles.fetch("requests/ip")
+abort("global throttle limit mismatch") unless throttle.limit == 300
+abort("global throttle period mismatch") unless throttle.period == 60
+cache = Rack::Attack.cache
+cache.store.clear
+now = Time.now.to_i
+remaining = 60 - (now % 60)
+sleep(remaining + 1) if remaining < 8
+now = Time.now.to_i
+bucket = now / 60
+expires = 60 - (now % 60) + 1
+key = "#{cache.prefix}:#{bucket}:requests/ip:#{ENV.fetch("GLOBAL_IP")}"
+cache.store.write(key, 299, expires_in: expires)
+puts "GLOBAL_THROTTLE_PRESEED=PASS limit=#{throttle.limit} period=#{throttle.period}"
+' > "$tmp/global-preseed"
+: > "$tmp/global-statuses"
+curl -sS -H "X-Forwarded-For: $global_ip" -o /dev/null -w "%{http_code}\n" "$base/session/new" >> "$tmp/global-statuses"
+curl -sS -H "X-Forwarded-For: $global_ip" -o /dev/null -w "%{http_code}\n" "$base/session/new" >> "$tmp/global-statuses"
+curl -sS -o /dev/null -w "%{http_code}\n" "$base/up" > "$tmp/up-after-global"
+curl -sS -o /dev/null -w "%{http_code}\n" "$base/ready" > "$tmp/ready-after-global"
+RAILS_ENV=production bin/rails runner 'puts Rails.cache.class.name' > "$tmp/cache-store"
+VERSION="$VERSION" EMAIL="$email" PASSWORD="$password" python3 - "$tmp" "$OUT" "$LOG" <<'PY'
+import json,os,sys
+from datetime import datetime,timezone
+from pathlib import Path
+tmp,out,log=map(Path,sys.argv[1:4]); statuses=[int(x) for x in (tmp/"statuses").read_text().split()]
+if statuses[:5] != [302]*5 or statuses[5] != 429: raise SystemExit(f"unexpected login throttle statuses: {statuses}")
+h=(tmp/"login-6.headers").read_text(errors="replace").lower(); b=(tmp/"login-6.body").read_text(errors="replace").strip()
+if "retry-after:" not in h or "cache-control: no-store" not in h: raise SystemExit("throttle headers missing")
+if "set-cookie:" in h: raise SystemExit("throttle response set a session cookie")
+if b != "Too many requests. Try again later.": raise SystemExit("unexpected throttle body")
+if any(int(x)!=200 for x in (tmp/"up").read_text().split()): raise SystemExit("/up throttled")
+if any(int(x)!=200 for x in (tmp/"ready").read_text().split()): raise SystemExit("/ready throttled")
+account=[int(x) for x in (tmp/"account-statuses").read_text().split()]
+if account[:10] != [302]*10 or account[10] != 429: raise SystemExit(f"account throttle mismatch: {account}")
+global_codes=[int(x) for x in (tmp/"global-statuses").read_text().split()]
+if global_codes != [200,429]:
+    raise SystemExit(f"global request throttle mismatch statuses={global_codes}")
+preseed=(tmp/"global-preseed").read_text().strip()
+if preseed != "GLOBAL_THROTTLE_PRESEED=PASS limit=300 period=60":
+    raise SystemExit(f"global throttle contract mismatch: {preseed}")
+if int((tmp/"up-after-global").read_text()) != 200 or int((tmp/"ready-after-global").read_text()) != 200: raise SystemExit("health safelist failed after global throttle")
+server=(tmp/"server.log").read_text(errors="replace")
+if os.environ["EMAIL"] in server or os.environ["PASSWORD"] in server: raise SystemExit("canary leaked")
+if "fix45-login-6" not in server: raise SystemExit("request id missing")
+data={"schema_version":1,"release_version":os.environ["VERSION"],"generated_at":datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),"status":"pass","login_ip_limit":5,"login_request_statuses":statuses,"login_account_limit":10,"login_account_normalized_across_ips":True,"login_account_statuses":account,"global_ip_limit":300,"global_probe_strategy":"preseed_299_plus_two_http_requests","global_request_300_status":global_codes[0],"global_request_301_status":global_codes[1],"throttled_status":429,"retry_after_present":True,"cache_control_no_store":True,"throttled_response_sets_session_cookie":False,"health_up_safelisted":True,"health_ready_safelisted":True,"request_id_log_correlation":True,"cache_store_class":(tmp/"cache-store").read_text().strip(),"plaintext_canary_values_exposed":False,"contains_secret_values":False}
+out.write_text(json.dumps(data,sort_keys=True,indent=2)+"\n"); out.chmod(0o644)
+log.write_text("RATE_LIMIT_PREFLIGHT=PASS\nlogin_ip_throttle=PASS\nlogin_account_throttle=PASS\nglobal_ip_throttle=PASS\nhealth_safelist=PASS\nrequest_id_log_correlation=PASS\nplaintext_canary_values_exposed=NO\nevidence_contains_secret_values=NO\n"); log.chmod(0o644)
+PY
+echo "RATE_LIMIT_PREFLIGHT=PASS evidence=$OUT"
+echo "RATE_LIMIT_SECRET_VALUES=ABSENT"

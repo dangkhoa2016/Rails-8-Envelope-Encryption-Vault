@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+OUT="${LOGGING_REDACTION_EVIDENCE_OUT:-$ROOT/tmp/release-artifacts/LOGGING-REDACTION-PREFLIGHT.json}"
+LOG="${LOGGING_REDACTION_LOG_OUT:-$ROOT/tmp/release-artifacts/LOGGING-REDACTION-PREFLIGHT.log}"
+VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
+tmp="$(mktemp -d)"
+server_pid=""
+
+cleanup() {
+  if [[ -n "$server_pid" ]]; then
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+  fi
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+
+port="$(python3 - <<'PY'
+import socket
+for p in range(3400, 3500):
+    s=socket.socket()
+    try: s.bind(("127.0.0.1", p))
+    except OSError: s.close(); continue
+    s.close(); print(p); break
+else: raise SystemExit("no free logging preflight port")
+PY
+)"
+mkdir -p "$(dirname "$OUT")" "$(dirname "$LOG")"
+cd "$ROOT"
+source ./activate-kaggle.sh >/dev/null
+
+request_id="fix43-logging-redaction"
+password="FIX43_PASSWORD_CANARY_91f4c8"
+secret_value="FIX43_SECRET_CANARY_7b2d10"
+token="FIX43_TOKEN_CANARY_a62c31"
+email="fix43-email-canary-5d17@example.invalid"
+env_text="FIX43_ENV_CANARY_KEY=FIX43_ENV_CANARY_VALUE_44e8"
+query="FIX43_QUERY_CANARY_c773"
+ciphertext="FIX43_CIPHERTEXT_CANARY_2a8f"
+nonce="FIX43_NONCE_CANARY_81bd"
+
+APP_HOSTS=127.0.0.1,localhost DEMO_MODE=true FORCE_SSL=false ASSUME_SSL=false LOGGING_PREFLIGHT_PROBE=true RAILS_ENV=production PORT="$port" bin/rails server -b 127.0.0.1 -p "$port" >"$tmp/server.log" 2>&1 &
+server_pid=$!
+
+for _ in $(seq 1 40); do
+  if curl -fsS -o /dev/null -H "Host: 127.0.0.1" "http://127.0.0.1:$port/up"; then
+    break
+  fi
+  if ! kill -0 "$server_pid" 2>/dev/null; then
+    tail -n 80 "$tmp/server.log" >&2
+    exit 1
+  fi
+  sleep 0.5
+done
+status="$(curl -sS -o "$tmp/body" -w "%{http_code}"   -H "Host: 127.0.0.1"   -H "X-Request-Id: $request_id"   --data-urlencode "password=$password"   --data-urlencode "secret_value=$secret_value"   --data-urlencode "token=$token"   --data-urlencode "email_address=$email"   --data-urlencode "env_text=$env_text"   --data-urlencode "q=$query"   --data-urlencode "ciphertext=$ciphertext"   --data-urlencode "nonce=$nonce"   "http://127.0.0.1:$port/__logging_preflight")"
+
+[[ "$status" == "204" ]] || { echo "logging probe failed: $status" >&2; exit 1; }
+sleep 0.3
+
+VERSION="$VERSION" STATUS="$status" REQUEST_ID="$request_id" PASSWORD_CANARY="$password" SECRET_CANARY="$secret_value" TOKEN_CANARY="$token" EMAIL_CANARY="$email" ENV_CANARY="$env_text" QUERY_CANARY="$query" CIPHERTEXT_CANARY="$ciphertext" NONCE_CANARY="$nonce" python3 - "$tmp/server.log" "$OUT" "$LOG" <<'PY'
+import json, os, sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+server_log, out, log = map(Path, sys.argv[1:4])
+text=server_log.read_text(errors="replace")
+canaries={
+    "password":os.environ["PASSWORD_CANARY"],
+    "secret_value":os.environ["SECRET_CANARY"],
+    "token":os.environ["TOKEN_CANARY"],
+    "email_address":os.environ["EMAIL_CANARY"],
+    "env_text":os.environ["ENV_CANARY"],
+    "q":os.environ["QUERY_CANARY"],
+    "ciphertext":os.environ["CIPHERTEXT_CANARY"],
+    "nonce":os.environ["NONCE_CANARY"],
+}
+leaked=[name for name,value in canaries.items() if value in text]
+if leaked:
+    raise SystemExit(f"plaintext canary leaked in production log: {leaked}")
+
+rid=os.environ["REQUEST_ID"]
+if rid not in text:
+    raise SystemExit("request id missing from production log")
+
+filtered_count=text.count("[FILTERED]")
+if filtered_count < len(canaries):
+    raise SystemExit(f"insufficient filtered parameters: {filtered_count}")
+
+for key in canaries:
+    if key not in text:
+        raise SystemExit(f"sensitive parameter key missing from request log: {key}")
+
+data={
+    "schema_version":1,
+    "release_version":os.environ["VERSION"],
+    "generated_at":datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "status":"pass",
+    "probe_http_status":int(os.environ["STATUS"]),
+    "request_id_log_correlation":True,
+    "sensitive_parameter_keys_checked":sorted(canaries),
+    "sensitive_parameter_count":len(canaries),
+    "filtered_marker_count_at_least":len(canaries),
+    "plaintext_canary_values_exposed":False,
+    "contains_secret_values":False,
+}
+out.write_text(json.dumps(data,sort_keys=True,indent=2)+"\n")
+out.chmod(0o644)
+
+summary=[
+    f"release_version={data['release_version']}",
+    "LOGGING_REDACTION_PREFLIGHT=PASS",
+    f"probe_http_status={data['probe_http_status']}",
+    f"sensitive_parameter_count={data['sensitive_parameter_count']}",
+    "request_id_log_correlation=PASS",
+    "plaintext_canary_values_exposed=NO",
+    "evidence_contains_secret_values=NO",
+]
+log.write_text("\n".join(summary)+"\n")
+log.chmod(0o644)
+PY
+
+echo "LOGGING_REDACTION_PREFLIGHT=PASS evidence=$OUT"
+echo "LOGGING_SECRET_VALUES=ABSENT"

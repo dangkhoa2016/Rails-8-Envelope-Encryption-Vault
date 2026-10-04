@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+OUT="${UX_ACCESSIBILITY_EVIDENCE_OUT:-$ROOT/tmp/release-artifacts/UX-ACCESSIBILITY-PREFLIGHT.json}"
+LOG="${UX_ACCESSIBILITY_LOG_OUT:-$ROOT/tmp/release-artifacts/UX-ACCESSIBILITY-PREFLIGHT.log}"
+VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
+
+mkdir -p "$(dirname "$OUT")" "$(dirname "$LOG")"
+cd "$ROOT"
+source ./activate-kaggle.sh >/dev/null
+
+bin/rails tailwindcss:build >"$LOG" 2>&1
+bin/rails test   test/system/production_ux_accessibility_test.rb   >>"$LOG" 2>&1
+
+VERSION="$VERSION" python3 - "$OUT" <<'PY'
+import json, os, sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+out=Path(sys.argv[1])
+data={
+  "schema_version": 1,
+  "release_version": os.environ["VERSION"],
+  "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+  "automated_status": "pass",
+  "automated_checks": {
+    "keyboard_focus_traversal": "pass",
+    "visible_focus_treatment": "pass",
+    "validation_error_semantics": "pass",
+    "reflow_200_percent_proxy": "pass",
+    "primary_mobile_target_size": "pass",
+    "reduced_motion_browser_preference": "pass"
+  },
+  "human_checks": {
+    "screen_reader_walkthrough": "pending",
+    "full_keyboard_workflow_judgment": "pending",
+    "layered_color_contrast_review": "pending",
+    "real_touch_device_usability": "pending",
+    "subjective_focus_usability": "pending"
+  },
+  "claims": {
+    "wcag_conformance": False,
+    "manual_accessibility_complete": False
+  }
+}
+out.write_text(json.dumps(data, sort_keys=True, indent=2)+"\n")
+out.chmod(0o644)
+PY
+
+echo "UX_ACCESSIBILITY_PREFLIGHT=PASS evidence=$OUT"
+echo "UX_ACCESSIBILITY_MANUAL_STATUS=PENDING"

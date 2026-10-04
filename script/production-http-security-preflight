@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+OUT="${HTTP_SECURITY_EVIDENCE_OUT:-$ROOT/tmp/release-artifacts/HTTP-SECURITY-PREFLIGHT.json}"
+LOG="${HTTP_SECURITY_LOG_OUT:-$ROOT/tmp/release-artifacts/HTTP-SECURITY-PREFLIGHT.log}"
+VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
+tmp="$(mktemp -d)"
+server_pid=""
+
+cleanup() {
+  if [[ -n "$server_pid" ]]; then
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+  fi
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+
+port="$(python3 - <<'PY'
+import socket
+for p in range(3200, 3300):
+    s=socket.socket()
+    try:
+        s.bind(("127.0.0.1", p))
+    except OSError:
+        s.close(); continue
+    s.close(); print(p); break
+else:
+    raise SystemExit("no free HTTP security preflight port")
+PY
+)"
+mkdir -p "$(dirname "$OUT")" "$(dirname "$LOG")"
+cd "$ROOT"
+source ./activate-kaggle.sh >/dev/null
+
+APP_HOSTS=127.0.0.1,localhost FORCE_SSL=true ASSUME_SSL=false RAILS_ENV=production PORT="$port" bin/rails server -b 127.0.0.1 -p "$port" >"$tmp/server.log" 2>&1 &
+server_pid=$!
+
+for _ in $(seq 1 40); do
+  if curl -fsS -o /dev/null 2>/dev/null       -H "Host: 127.0.0.1"       -H "X-Forwarded-Proto: https"       "http://127.0.0.1:$port/session/new"; then
+    break
+  fi
+  if ! kill -0 "$server_pid" 2>/dev/null; then
+    tail -n 80 "$tmp/server.log" >&2
+    exit 1
+  fi
+  sleep 0.5
+done
+
+curl -sS -D "$tmp/https.headers" -o /dev/null   -H "Host: 127.0.0.1"   -H "X-Forwarded-Proto: https"   "http://127.0.0.1:$port/session/new"
+curl -sS -D "$tmp/http.headers" -o /dev/null   -H "Host: 127.0.0.1"   "http://127.0.0.1:$port/session/new"
+curl -sS -D "$tmp/up.headers" -o /dev/null   -H "Host: 127.0.0.1"   "http://127.0.0.1:$port/up"
+curl -sS -D "$tmp/ready.headers" -o /dev/null   -H "Host: 127.0.0.1"   "http://127.0.0.1:$port/ready"
+VERSION="$VERSION" python3 - "$tmp" "$OUT" "$LOG" <<'PY'
+import json, os, re, sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+tmp, out, log = map(Path, sys.argv[1:4])
+
+def parse(name):
+    raw=(tmp/name).read_text(errors="replace").replace("\r\n","\n")
+    blocks=[b for b in raw.split("\n\n") if b.strip()]
+    block=blocks[-1]
+    lines=block.splitlines()
+    m=re.match(r"HTTP/\S+\s+(\d+)", lines[0])
+    if not m:
+        raise SystemExit(f"invalid HTTP response in {name}")
+    headers={}
+    for line in lines[1:]:
+        if ":" not in line: continue
+        k,v=line.split(":",1)
+        headers.setdefault(k.strip().lower(), []).append(v.strip())
+    return int(m.group(1)), headers
+
+https_status, h=parse("https.headers")
+http_status, hp=parse("http.headers")
+up_status, hu=parse("up.headers")
+ready_status, hr=parse("ready.headers")
+
+def one(headers, key):
+    vals=headers.get(key.lower(), [])
+    return ", ".join(vals)
+
+required_exact={
+    "x-frame-options":"DENY",
+    "x-content-type-options":"nosniff",
+    "referrer-policy":"same-origin",
+    "cross-origin-opener-policy":"same-origin",
+    "cross-origin-resource-policy":"same-origin",
+    "x-permitted-cross-domain-policies":"none",
+}
+for k,v in required_exact.items():
+    if one(h,k).lower()!=v.lower():
+        raise SystemExit(f"{k} mismatch")
+permissions=one(h,"permissions-policy")
+for token in ["camera=()","microphone=()","geolocation=()","payment=()","usb=()"]:
+    if token not in permissions:
+        raise SystemExit(f"permissions-policy missing {token}")
+
+csp=one(h,"content-security-policy")
+for token in [
+    "default-src 'self'", "object-src 'none'", "frame-ancestors 'none'",
+    "base-uri 'self'", "form-action 'self'", "script-src 'self' 'nonce-",
+    "style-src 'self' 'nonce-"
+]:
+    if token not in csp:
+        raise SystemExit(f"CSP missing {token}")
+
+hsts=one(h,"strict-transport-security")
+if "max-age=" not in hsts or "includeSubDomains" not in hsts:
+    raise SystemExit("HSTS contract mismatch")
+
+cookie=one(h,"set-cookie").lower()
+for flag in ["secure","httponly","samesite=strict"]:
+    if flag not in cookie:
+        raise SystemExit(f"session cookie missing {flag}")
+
+cache=one(h,"cache-control").lower()
+if "no-store" not in cache:
+    raise SystemExit("session page must be no-store")
+
+location=one(hp,"location")
+if http_status not in (301,302,307,308) or not location.startswith("https://"):
+    raise SystemExit(f"HTTP to HTTPS redirect failed: status={http_status}")
+
+if https_status != 200:
+    raise SystemExit(f"HTTPS session page failed: {https_status}")
+if up_status != 200 or one(hu,"location"):
+    raise SystemExit(f"/up redirect/health contract failed: {up_status}")
+if ready_status != 200 or one(hr,"location"):
+    raise SystemExit(f"/ready redirect/health contract failed: {ready_status}")
+
+data={
+  "schema_version":1,
+  "release_version":os.environ["VERSION"],
+  "generated_at":datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+  "status":"pass",
+  "https_session_status":https_status,
+  "http_redirect_status":http_status,
+  "health_up_status":up_status,
+  "health_ready_status":ready_status,
+  "headers":{
+    "content_security_policy":"pass",
+    "strict_transport_security":"pass",
+    "frame_options":"pass",
+    "content_type_options":"pass",
+    "referrer_policy":"pass",
+    "permissions_policy":"pass",
+    "cross_origin_opener_policy":"pass",
+    "cross_origin_resource_policy":"pass",
+    "permitted_cross_domain_policies":"pass",
+    "cache_control_no_store":"pass"
+  },
+  "session_cookie":{
+    "secure":"pass",
+    "httponly":"pass",
+    "same_site_strict":"pass"
+  },
+  "http_to_https_redirect":"pass",
+  "health_redirect_exclusions":"pass",
+  "contains_secret_values":False
+}
+out.write_text(json.dumps(data,sort_keys=True,indent=2)+"\n")
+out.chmod(0o644)
+summary=[
+  f"release_version={data['release_version']}",
+  "HTTP_SECURITY_PREFLIGHT=PASS",
+  f"https_session_status={https_status}",
+  f"http_redirect_status={http_status}",
+  f"health_up_status={up_status}",
+  f"health_ready_status={ready_status}",
+  "csp=PASS",
+  "hsts=PASS",
+  "session_cookie_secure=PASS",
+  "session_cookie_httponly=PASS",
+  "session_cookie_samesite_strict=PASS",
+  "http_to_https_redirect=PASS",
+  "health_redirect_exclusions=PASS",
+  "raw_cookie_value_logged=NO",
+]
+log.write_text("\n".join(summary)+"\n")
+log.chmod(0o644)
+PY
+
+echo "HTTP_SECURITY_PREFLIGHT=PASS evidence=$OUT"
+echo "HTTP_SECURITY_SECRET_VALUES=ABSENT"

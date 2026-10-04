@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd "$(dirname "$0")/.."
+
+status=0
+pass() { printf 'PASS %-30s %s\n' "$1" "${2:-}"; }
+fail() { printf 'FAIL %-30s %s\n' "$1" "${2:-}" >&2; status=1; }
+skip() { printf 'SKIP %-30s %s\n' "$1" "${2:-}"; }
+
+if script/ops-check >/dev/null 2>&1; then
+  pass ops_check
+else
+  fail ops_check "operator readiness gate failed"
+fi
+
+if [ -n "${APP_URL:-}" ]; then
+  if script/production-smoke >/dev/null 2>&1; then pass https_smoke; else fail https_smoke "live HTTPS smoke failed"; fi
+else
+  if [ "${REQUIRE_REAL_HTTPS:-0}" = "1" ]; then fail https_smoke "APP_URL is required"; else skip https_smoke "APP_URL not configured"; fi
+fi
+
+if [ -n "${RECOVERY_KEK_DIR:-}" ]; then
+  if script/kek-recovery-check >/dev/null; then pass kek_recovery_custody; else fail kek_recovery_custody; fi
+else
+  if [ "${REQUIRE_KEK_RECOVERY:-0}" = "1" ]; then fail kek_recovery_custody "RECOVERY_KEK_DIR is required"; else skip kek_recovery_custody "RECOVERY_KEK_DIR not configured"; fi
+fi
+backup="${ACCEPTANCE_BACKUP_FILE:-}"
+if [ -n "$backup" ]; then
+  if script/verify-backup "$backup" >/dev/null 2>&1; then pass backup_verify "$(basename "$backup")"; else fail backup_verify; fi
+
+  if [ -n "${OFFSITE_DRIVER:-}" ]; then
+    if [ "${REQUIRE_REAL_OFFSITE:-0}" = "1" ] && [ "$OFFSITE_DRIVER" != "rclone" ]; then
+      fail offsite_roundtrip "strict real-offsite acceptance requires OFFSITE_DRIVER=rclone"
+    elif OFFSITE_REQUIRE_REMOTE="${REQUIRE_REAL_OFFSITE:-0}" script/offsite-roundtrip "$backup" >/dev/null; then
+      pass offsite_roundtrip "$OFFSITE_DRIVER"
+    else
+      fail offsite_roundtrip "$OFFSITE_DRIVER"
+    fi
+  else
+    if [ "${REQUIRE_REAL_OFFSITE:-0}" = "1" ]; then fail offsite_roundtrip "OFFSITE_DRIVER is required"; else skip offsite_roundtrip "OFFSITE_DRIVER not configured"; fi
+  fi
+else
+  if [ "${REQUIRE_BACKUP_ACCEPTANCE:-0}" = "1" ]; then
+    fail backup_verify "ACCEPTANCE_BACKUP_FILE is required"
+    fail offsite_roundtrip "ACCEPTANCE_BACKUP_FILE is required"
+  else
+    skip backup_verify "ACCEPTANCE_BACKUP_FILE not configured"
+    skip offsite_roundtrip "ACCEPTANCE_BACKUP_FILE not configured"
+  fi
+fi
+
+if [ "$status" -eq 0 ]; then
+  echo "PASS production acceptance contract"
+else
+  echo "FAIL production acceptance contract" >&2
+fi
+exit "$status"
