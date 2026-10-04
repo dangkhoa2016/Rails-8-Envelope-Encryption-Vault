@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd "$(dirname "$0")/.."
+ROOT="$(pwd -P)"
+
+file="${1:?usage: OFFSITE_DRIVER=filesystem|rclone ... script/offsite-roundtrip PATH.dump.age}"
+[ -f "$file" ] || { echo "ERROR backup file not found" >&2; exit 1; }
+[ -f "$file.sha256" ] || { echo "ERROR checksum sidecar not found" >&2; exit 1; }
+
+driver="${OFFSITE_DRIVER:-}"
+[ -n "$driver" ] || { echo "ERROR OFFSITE_DRIVER is required" >&2; exit 1; }
+base="$(basename "$file")"
+checksum_base="$(basename "$file.sha256")"
+local_sha="$(sha256sum "$file" | awk '{print $1}')"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+case "$driver" in
+  filesystem)
+    : "${OFFSITE_DEST_DIR:?OFFSITE_DEST_DIR is required for filesystem driver}"
+    mkdir -p "$OFFSITE_DEST_DIR"
+    dest="$(cd "$OFFSITE_DEST_DIR" && pwd -P)"
+    src_dir="$(cd "$(dirname "$file")" && pwd -P)"
+    [ "$dest" != "$src_dir" ] || { echo "ERROR offsite destination must differ from source directory" >&2; exit 1; }
+    install -m 600 "$file" "$dest/$base"
+    install -m 600 "$file.sha256" "$dest/$checksum_base"
+    cp "$dest/$base" "$work/$base"
+    cp "$dest/$checksum_base" "$work/$checksum_base"
+    ;;
+  rclone)
+    : "${OFFSITE_RCLONE_DEST:?OFFSITE_RCLONE_DEST is required for rclone driver}"
+    : "${RCLONE_CONFIG:?RCLONE_CONFIG is required for rclone driver}"
+    resolver_args=()
+    [ "${OFFSITE_RCLONE_PROVISION:-0}" = "1" ] && resolver_args+=(--provision)
+    rclone_bin="$("$ROOT/script/rclone-resolve" "${resolver_args[@]}")"
+    if [ "${OFFSITE_REQUIRE_REMOTE:-0}" = "1" ]; then
+      "$ROOT/script/offsite-capability-preflight"         --dest "$OFFSITE_RCLONE_DEST"         --config "$RCLONE_CONFIG" >/dev/null
+    fi
+    "$rclone_bin" --config "$RCLONE_CONFIG" --retries 3 --low-level-retries 3 copyto "$file" "${OFFSITE_RCLONE_DEST%/}/$base"
+    "$rclone_bin" --config "$RCLONE_CONFIG" --retries 3 --low-level-retries 3 copyto "$file.sha256" "${OFFSITE_RCLONE_DEST%/}/$checksum_base"
+    "$rclone_bin" --config "$RCLONE_CONFIG" --retries 3 --low-level-retries 3 copyto "${OFFSITE_RCLONE_DEST%/}/$base" "$work/$base"
+    "$rclone_bin" --config "$RCLONE_CONFIG" --retries 3 --low-level-retries 3 copyto "${OFFSITE_RCLONE_DEST%/}/$checksum_base" "$work/$checksum_base"
+    ;;
+  *)
+    echo "ERROR unsupported OFFSITE_DRIVER=$driver" >&2
+    exit 1
+    ;;
+esac
+
+retrieved_sha="$(sha256sum "$work/$base" | awk '{print $1}')"
+[ "$retrieved_sha" = "$local_sha" ] || { echo "ERROR offsite round-trip checksum mismatch" >&2; exit 1; }
+expected_sha="$(awk '{print $1}' "$work/$checksum_base" | head -1)"
+[ "$expected_sha" = "$local_sha" ] || { echo "ERROR retrieved checksum sidecar does not match backup" >&2; exit 1; }
+
+echo "PASS offsite round-trip"
+echo "driver=$driver"
+echo "backup=$base"
+echo "sha256=$local_sha"

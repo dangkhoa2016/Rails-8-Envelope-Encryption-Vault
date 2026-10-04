@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+file="${1:?usage: script/verify-backup PATH.dump[.age]}"
+checksum="$file.sha256"
+[ -f "$checksum" ] || { echo "Missing checksum: $checksum" >&2; exit 1; }
+expected_sha="$(awk 'NR==1 {print $1}' "$checksum")"
+[[ "$expected_sha" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "Invalid checksum sidecar: $checksum" >&2; exit 1; }
+actual_sha="$(sha256sum "$file" | awk '{print $1}')"
+[ "${actual_sha,,}" = "${expected_sha,,}" ] || { echo "$(basename "$file"): FAILED" >&2; exit 1; }
+echo "$(basename "$file"): OK"
+
+catalog_check() {
+  if [[ "$file" == *.age ]]; then
+    : "${BACKUP_AGE_IDENTITY:?BACKUP_AGE_IDENTITY is required to verify encrypted backups}"
+    command -v age >/dev/null || { echo "age is required" >&2; return 1; }
+    age -d -i "$BACKUP_AGE_IDENTITY" "$file" | pg_restore --list >/dev/null
+  else
+    pg_restore --list "$file" >/dev/null
+  fi
+}
+
+if ! catalog_check; then
+  echo "ERROR: pg_restore could not read the backup catalog." >&2
+  echo "Installed: $(pg_restore --version 2>/dev/null || echo 'pg_restore unavailable')" >&2
+  echo "Recovery hosts must provide a pg_restore version compatible with the pg_dump version that created the backup." >&2
+  echo "For the current FIX13/FIX14 acceptance backups, PostgreSQL 17 client tooling is known-good." >&2
+  exit 1
+fi
+
+echo "PASS: checksum and pg_restore catalog validation succeeded."
+echo "A full recovery PASS still requires restoring into a fresh DB and decrypting a canary secret."

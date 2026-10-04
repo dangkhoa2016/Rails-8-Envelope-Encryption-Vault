@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: script/private-dr-provenance-preflight \
+  --archive /absolute/private-dr.tar.gz.age \
+  --provenance /absolute/provenance.json \
+  --acceptance /absolute/private-dr-acceptance.json \
+  [--evidence /absolute/sanitized-evidence.json]
+EOF
+  exit 64
+}
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+archive=""
+provenance=""
+acceptance=""
+evidence=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --archive) archive="${2:-}"; shift 2 ;;
+    --provenance) provenance="${2:-}"; shift 2 ;;
+    --acceptance) acceptance="${2:-}"; shift 2 ;;
+    --evidence) evidence="${2:-}"; shift 2 ;;
+    -h|--help) usage ;;
+    *) usage ;;
+  esac
+done
+
+for p in "$archive" "$provenance" "$acceptance"; do
+  [[ "$p" == /* && "$p" != "/" ]] || {
+    echo "PRIVATE_DR_PROVENANCE=FAIL reason=absolute-path-required" >&2
+    exit 2
+  }
+  [[ -f "$p" && -r "$p" ]] || {
+    echo "PRIVATE_DR_PROVENANCE=FAIL reason=missing-input" >&2
+    exit 2
+  }
+done
+
+evidence="${evidence:-$ROOT/tmp/release-artifacts/PRIVATE-DR-PROVENANCE.json}"
+[[ "$evidence" == /* && "$evidence" != "/" ]] || {
+  echo "PRIVATE_DR_PROVENANCE=FAIL reason=evidence-absolute-path-required" >&2
+  exit 2
+}
+mkdir -p "$(dirname "$evidence")"
+
+version="$(tr -d '\r\n' < "$ROOT/VERSION")"
+
+python3 - "$archive" "$provenance" "$acceptance" "$evidence" "$version" <<'PY'
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+
+archive = Path(sys.argv[1])
+provenance_path = Path(sys.argv[2])
+acceptance_path = Path(sys.argv[3])
+evidence_path = Path(sys.argv[4])
+release_version = sys.argv[5]
+
+def fail(reason):
+    raise SystemExit(f"PRIVATE_DR_PROVENANCE=FAIL reason={reason}")
+
+def load_json(path, label):
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        fail(f"invalid-{label}-json")
+    if not isinstance(data, dict):
+        fail(f"invalid-{label}-document")
+    return data
+
+provenance = load_json(provenance_path, "provenance")
+acceptance = load_json(acceptance_path, "acceptance")
+
+archive_sha = hashlib.sha256(archive.read_bytes()).hexdigest()
+archive_name = archive.name
+
+if provenance.get("schema_version") != 1:
+    fail("unsupported-schema")
+if provenance.get("status") != "pass":
+    fail("provenance-status-not-pass")
+if provenance.get("snapshot_role") != "production-authority":
+    fail("snapshot-role-not-production-authority")
+if provenance.get("target_release_version") != release_version:
+    fail("target-release-version-mismatch")
+if provenance.get("artifact") != archive_name:
+    fail("artifact-name-mismatch")
+if provenance.get("artifact_sha256") != archive_sha:
+    fail("artifact-sha256-mismatch")
+if provenance.get("production_authority_confirmed") is not True:
+    fail("production-authority-not-confirmed")
+if provenance.get("source_equals_runtime_database") is not False:
+    fail("runtime-database-source-not-forbidden")
+
+source_type = provenance.get("source_type")
+if source_type not in ("production-database", "promoted-private-dr"):
+    fail("unsupported-source-type")
+
+source_release = provenance.get("source_release_version")
+if not isinstance(source_release, str) or not source_release:
+    fail("missing-source-release-version")
+
+if source_type == "promoted-private-dr" and source_release != release_version:
+    if provenance.get("migration_set_identical") is not True:
+        fail("inherited-snapshot-migration-contract-not-proven")
+
+for key in (
+    "contains_secret_values",
+    "credential_values_recorded",
+    "key_ids_recorded",
+    "plaintext_recorded",
+):
+    if provenance.get(key) is not False:
+        fail(f"sensitive-data-contract-{key}")
+
+counts = provenance.get("database_counts")
+if not isinstance(counts, dict):
+    fail("missing-database-counts")
+
+minimums = {
+    "users": 1,
+    "vault_items": 1,
+    "vault_item_versions": 1,
+    "key_registries": 2,
+    "audit_events": 1,
+}
+for key, minimum in minimums.items():
+    value = counts.get(key)
+    if not isinstance(value, int) or isinstance(value, bool):
+        fail(f"invalid-count-{key}")
+    if value < minimum:
+        fail(f"count-below-minimum-{key}")
+
+if acceptance.get("artifact") != archive_name:
+    fail("acceptance-artifact-mismatch")
+if acceptance.get("outer_decrypt") != "pass":
+    fail("acceptance-outer-decrypt-not-pass")
+if acceptance.get("database_restore") != "pass":
+    fail("acceptance-database-restore-not-pass")
+if acceptance.get("historical_decrypt") != "pass":
+    fail("acceptance-historical-decrypt-not-pass")
+if acceptance.get("http_up") != 200 or acceptance.get("http_ready") != 200:
+    fail("acceptance-http-readiness-not-pass")
+
+acceptance_counts = acceptance.get("database_counts")
+if acceptance_counts != counts:
+    fail("acceptance-database-counts-mismatch")
+
+for key in ("credential_values_recorded", "key_ids_recorded", "plaintext_recorded"):
+    if acceptance.get(key) is not False:
+        fail(f"acceptance-sensitive-data-contract-{key}")
+
+sanitized = {
+    "schema_version": 1,
+    "status": "pass",
+    "artifact": archive_name,
+    "artifact_sha256": archive_sha,
+    "snapshot_role": "production-authority",
+    "source_type": source_type,
+    "source_release_version": source_release,
+    "target_release_version": release_version,
+    "production_authority_confirmed": True,
+    "source_equals_runtime_database": False,
+    "migration_set_identical": provenance.get("migration_set_identical"),
+    "database_counts": counts,
+    "acceptance_historical_decrypt": "pass",
+    "acceptance_http_up": 200,
+    "acceptance_http_ready": 200,
+    "contains_secret_values": False,
+    "credential_values_recorded": False,
+    "key_ids_recorded": False,
+    "plaintext_recorded": False,
+}
+
+evidence_path.write_text(
+    json.dumps(sanitized, sort_keys=True, indent=2) + "\n",
+    encoding="utf-8",
+)
+evidence_path.chmod(0o644)
+print("PRIVATE_DR_PROVENANCE=PASS")
+PY
+
+echo "PRIVATE_DR_PROVENANCE_EVIDENCE=PASS path=$evidence"

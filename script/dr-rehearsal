@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd "$(dirname "$0")/.."
+
+backup="${1:?usage: USER_EMAIL=... ITEM_ID=... EXPECTED_CANARY_FIELD=... EXPECTED_CANARY_VALUE=... script/dr-rehearsal PATH.dump[.age]}"
+: "${DATABASE_URL:?DATABASE_URL is required}"
+: "${USER_EMAIL:?USER_EMAIL is required}"
+: "${ITEM_ID:?ITEM_ID is required}"
+: "${EXPECTED_CANARY_FIELD:?EXPECTED_CANARY_FIELD is required}"
+: "${EXPECTED_CANARY_VALUE:?EXPECTED_CANARY_VALUE is required}"
+
+prefix="${DR_DATABASE_PREFIX:-ruby_envelope_vault_dr_}"
+stamp="$(date -u +%Y%m%d%H%M%S)"
+suffix="${DR_DATABASE_SUFFIX:-$stamp}"
+target_db="${DR_TARGET_DATABASE_NAME:-${prefix}${suffix}}"
+keep="${KEEP_DR_DATABASE:-0}"
+
+[[ "$target_db" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "ERROR unsafe DR target database name" >&2; exit 1; }
+[[ "$target_db" == "$prefix"* ]] || { echo "ERROR DR target database must start with $prefix" >&2; exit 1; }
+
+source_db="$(python3 - "$DATABASE_URL" <<'PY'
+import sys, urllib.parse
+u=urllib.parse.urlparse(sys.argv[1])
+print((u.path or "").lstrip("/"))
+PY
+)"
+source_user="$(python3 - "$DATABASE_URL" <<'PY'
+import sys, urllib.parse
+u=urllib.parse.urlparse(sys.argv[1])
+print(urllib.parse.unquote(u.username or ""))
+PY
+)"
+source_host="$(python3 - "$DATABASE_URL" <<'PY'
+import sys, urllib.parse
+u=urllib.parse.urlparse(sys.argv[1])
+print(u.hostname or "")
+PY
+)"
+source_port="$(python3 - "$DATABASE_URL" <<'PY'
+import sys, urllib.parse
+u=urllib.parse.urlparse(sys.argv[1])
+print(u.port or 5432)
+PY
+)"
+
+[ -n "$source_db" ] || { echo "ERROR DATABASE_URL has no database name" >&2; exit 1; }
+[ "$target_db" != "$source_db" ] || { echo "ERROR refusing to use source database as DR target" >&2; exit 1; }
+
+target_url="$(python3 - "$DATABASE_URL" "$target_db" <<'PY'
+import sys, urllib.parse
+u=urllib.parse.urlparse(sys.argv[1])
+new = u._replace(path="/" + sys.argv[2], params="", query="", fragment="")
+print(urllib.parse.urlunparse(new))
+PY
+)"
+
+local_socket="${DR_LOCAL_PG_SOCKET:-/var/run/postgresql}"
+source_host_decoded="$(python3 - "$source_host" <<'PYHOST'
+import sys, urllib.parse
+print(urllib.parse.unquote(sys.argv[1]))
+PYHOST
+)"
+source_query_host="$(python3 - "$DATABASE_URL" <<'PYHOST'
+import sys, urllib.parse
+u=urllib.parse.urlparse(sys.argv[1])
+q=urllib.parse.parse_qs(u.query)
+print((q.get("host") or [""])[0])
+PYHOST
+)"
+
+source_is_local=0
+case "$source_host_decoded" in
+  ""|localhost|127.0.0.1|"$local_socket") source_is_local=1 ;;
+esac
+if [ -n "$source_query_host" ]; then
+  case "$source_query_host" in
+    localhost|127.0.0.1|"$local_socket") source_is_local=1 ;;
+    /*) [ "$source_query_host" = "$local_socket" ] && source_is_local=1 ;;
+  esac
+fi
+case "$source_host_decoded" in
+  /*) [ "$source_host_decoded" = "$local_socket" ] && source_is_local=1 ;;
+esac
+
+requested_admin_mode="${DR_ADMIN_MODE:-auto}"
+case "$requested_admin_mode" in
+  auto|url|local-postgres) ;;
+  *) echo "ERROR DR_ADMIN_MODE must be one of: auto, url, local-postgres" >&2; exit 1 ;;
+esac
+
+local_postgres_available=0
+if [ "$source_is_local" = "1" ] && command -v runuser >/dev/null 2>&1 && id postgres >/dev/null 2>&1; then
+  local_postgres_available=1
+fi
+
+app_os_user="${DR_APP_OS_USER:-$source_user}"
+
+case "$requested_admin_mode" in
+  local-postgres)
+    [ "$local_postgres_available" = "1" ] || { echo "ERROR DR_ADMIN_MODE=local-postgres requires a local PostgreSQL source plus runuser and OS user postgres" >&2; exit 1; }
+    [ "$app_os_user" = "$source_user" ] || { echo "ERROR local peer-auth requires DR_APP_OS_USER to match DATABASE_URL user" >&2; exit 1; }
+    id "$app_os_user" >/dev/null 2>&1 || { echo "ERROR local peer-auth OS user not found: $app_os_user" >&2; exit 1; }
+    admin_mode="local-postgres"
+    ;;
+  url)
+    [ -n "${DR_ADMIN_DATABASE_URL:-}" ] || { echo "ERROR DR_ADMIN_MODE=url requires DR_ADMIN_DATABASE_URL" >&2; exit 1; }
+    admin_mode="url"
+    ;;
+  auto)
+    if [ "$local_postgres_available" = "1" ]; then
+      admin_mode="local-postgres"
+    elif [ -n "${DR_ADMIN_DATABASE_URL:-}" ]; then
+      admin_mode="url"
+    else
+      echo "ERROR no safe DR admin mode available; set DR_ADMIN_DATABASE_URL or use a local postgres OS-account environment" >&2
+      exit 1
+    fi
+    ;;
+esac
+
+echo "DR admin mode=$admin_mode"
+
+terminate_and_drop() {
+  if [ "$admin_mode" = "url" ]; then
+    psql "$DR_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -v db="$target_db" <<'SQL' >/dev/null
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = :'db' AND pid <> pg_backend_pid();
+SELECT format('DROP DATABASE IF EXISTS %I', :'db') \gexec
+SQL
+  else
+    runuser -u postgres -- psql -h "$local_socket" -p "$source_port" -d postgres -v ON_ERROR_STOP=1 -v db="$target_db" <<'SQL' >/dev/null
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = :'db' AND pid <> pg_backend_pid();
+SELECT format('DROP DATABASE IF EXISTS %I', :'db') \gexec
+SQL
+  fi
+}
+
+create_target() {
+  terminate_and_drop
+  if [ "$admin_mode" = "url" ]; then
+    psql "$DR_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -v db="$target_db" -v owner="$source_user" <<'SQL' >/dev/null
+SELECT format('CREATE DATABASE %I OWNER %I', :'db', :'owner') \gexec
+SQL
+  else
+    runuser -u postgres -- createdb -h "$local_socket" -p "$source_port" -O "$source_user" "$target_db"
+  fi
+}
+
+cleanup() {
+  local rc=$?
+  if [ "$keep" = "1" ]; then
+    echo "KEEP DR database=$target_db"
+  else
+    if terminate_and_drop; then
+      echo "PASS cleanup database=$target_db"
+    else
+      echo "FAIL cleanup database=$target_db" >&2
+      rc=1
+    fi
+  fi
+  trap - EXIT
+  exit "$rc"
+}
+trap cleanup EXIT
+
+echo "DR rehearsal target=$target_db"
+script/verify-backup "$backup"
+create_target
+if [ "$admin_mode" = "local-postgres" ]; then
+  runuser -u "$app_os_user" -- env \
+    PATH="$PATH" \
+    MISE_DATA_DIR="${MISE_DATA_DIR:-}" \
+    BUNDLE_PATH="${BUNDLE_PATH:-}" \
+    RAILS_ENV="${RAILS_ENV:-production}" \
+    BACKUP_AGE_IDENTITY="${BACKUP_AGE_IDENTITY:-}" \
+    VAULT_KEK_DIR="${VAULT_KEK_DIR:-}" \
+    TARGET_DATABASE_URL="$target_url" \
+    USER_EMAIL="$USER_EMAIL" \
+    ITEM_ID="$ITEM_ID" \
+    EXPECTED_CANARY_FIELD="$EXPECTED_CANARY_FIELD" \
+    EXPECTED_CANARY_VALUE="$EXPECTED_CANARY_VALUE" \
+    script/dr-verify "$backup"
+else
+  TARGET_DATABASE_URL="$target_url" \
+  USER_EMAIL="$USER_EMAIL" \
+  ITEM_ID="$ITEM_ID" \
+  EXPECTED_CANARY_FIELD="$EXPECTED_CANARY_FIELD" \
+  EXPECTED_CANARY_VALUE="$EXPECTED_CANARY_VALUE" \
+  script/dr-verify "$backup"
+fi
+
+echo "PASS DR rehearsal backup=$(basename "$backup") target=$target_db"

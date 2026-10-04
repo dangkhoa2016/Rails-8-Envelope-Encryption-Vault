@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd "$(dirname "$0")/.."
+ROOT="$(pwd -P)"
+
+base="${1:?usage: OFFSITE_RCLONE_DEST=remote:path ... script/offsite-dr-rehearsal BACKUP_BASENAME}"
+[[ "$base" == ruby-envelope-vault-*.dump.age ]] || { echo "ERROR unsafe backup basename" >&2; exit 1; }
+: "${OFFSITE_RCLONE_DEST:?OFFSITE_RCLONE_DEST is required}"
+: "${RCLONE_CONFIG:?RCLONE_CONFIG is required}"
+resolver_args=()
+[ "${OFFSITE_RCLONE_PROVISION:-0}" = "1" ] && resolver_args+=(--provision)
+rclone_bin="$("$ROOT/script/rclone-resolve" "${resolver_args[@]}")"
+: "${BACKUP_AGE_IDENTITY:?BACKUP_AGE_IDENTITY is required}"
+: "${USER_EMAIL:?USER_EMAIL is required}"
+: "${ITEM_ID:?ITEM_ID is required}"
+: "${EXPECTED_CANARY_FIELD:?EXPECTED_CANARY_FIELD is required}"
+: "${EXPECTED_CANARY_VALUE:?EXPECTED_CANARY_VALUE is required}"
+
+remote_name="${OFFSITE_RCLONE_DEST%%:*}"
+"$ROOT/script/offsite-capability-preflight" --dest "$OFFSITE_RCLONE_DEST" --config "$RCLONE_CONFIG" >/dev/null
+
+stage_root="${OFFSITE_DR_STAGE_ROOT:-/tmp}"
+mkdir -p "$stage_root"
+stage="$(mktemp -d "$stage_root/ruby-envelope-vault-offsite-dr.XXXXXX")"
+keep="${KEEP_OFFSITE_DR_STAGE:-0}"
+cleanup() {
+  local rc=$?
+  if [ "$keep" = "1" ]; then
+    echo "KEEP offsite DR stage=$stage"
+  else
+    rm -rf "$stage"
+    echo "PASS cleanup offsite DR stage"
+  fi
+  trap - EXIT
+  exit "$rc"
+}
+trap cleanup EXIT
+
+remote_base="${OFFSITE_RCLONE_DEST%/}"
+echo "OFFSITE DR download backup=$base"
+"$rclone_bin" --config "$RCLONE_CONFIG" --retries 3 --low-level-retries 3 copyto "$remote_base/$base" "$stage/$base"
+"$rclone_bin" --config "$RCLONE_CONFIG" --retries 3 --low-level-retries 3 copyto "$remote_base/$base.sha256" "$stage/$base.sha256"
+chmod 600 "$stage/$base" "$stage/$base.sha256"
+
+if [ "${DR_ADMIN_MODE:-auto}" = "local-postgres" ]; then
+  : "${DR_APP_OS_USER:?DR_APP_OS_USER is required with DR_ADMIN_MODE=local-postgres}"
+  id "$DR_APP_OS_USER" >/dev/null 2>&1 || { echo "ERROR DR_APP_OS_USER does not exist: $DR_APP_OS_USER" >&2; exit 1; }
+  chown "$DR_APP_OS_USER" "$stage" "$stage/$base" "$stage/$base.sha256"
+  chmod 700 "$stage"
+  chmod 600 "$stage/$base" "$stage/$base.sha256"
+fi
+
+BACKUP_AGE_IDENTITY="$BACKUP_AGE_IDENTITY" script/verify-backup "$stage/$base"
+
+BACKUP_AGE_IDENTITY="$BACKUP_AGE_IDENTITY" USER_EMAIL="$USER_EMAIL" ITEM_ID="$ITEM_ID" EXPECTED_CANARY_FIELD="$EXPECTED_CANARY_FIELD" EXPECTED_CANARY_VALUE="$EXPECTED_CANARY_VALUE" DR_DATABASE_PREFIX="${DR_DATABASE_PREFIX:-ruby_envelope_vault_dr_}" DR_DATABASE_SUFFIX="${DR_DATABASE_SUFFIX:-offsite_$(date -u +%Y%m%d%H%M%S)}" DR_ADMIN_MODE="${DR_ADMIN_MODE:-auto}" DR_APP_OS_USER="${DR_APP_OS_USER:-}" DR_ADMIN_DATABASE_URL="${DR_ADMIN_DATABASE_URL:-}" script/dr-rehearsal "$stage/$base"
+
+echo "PASS offsite DR rehearsal backup=$base remote=$remote_name"

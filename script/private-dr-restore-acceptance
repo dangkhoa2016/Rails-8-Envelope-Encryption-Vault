@@ -1,0 +1,352 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: script/private-dr-restore-acceptance \
+  --archive /absolute/private-dr.tar.gz.age \
+  --outer-key /absolute/outer-recovery.agekey \
+  --aws-secret /absolute/aws.env \
+  [--evidence /absolute/evidence.json] [--database-name NAME] [--keep-db]
+EOF
+  exit 64
+}
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+archive=""
+outer_key=""
+aws_secret=""
+evidence=""
+requested_db_name=""
+keep_db=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --archive) archive="${2:-}"; shift 2 ;;
+    --outer-key) outer_key="${2:-}"; shift 2 ;;
+    --aws-secret) aws_secret="${2:-}"; shift 2 ;;
+    --evidence) evidence="${2:-}"; shift 2 ;;
+    --database-name) requested_db_name="${2:-}"; shift 2 ;;
+    --keep-db) keep_db=1; shift ;;
+    -h|--help) usage ;;
+    *) usage ;;
+  esac
+done
+
+for p in "$archive" "$outer_key" "$aws_secret"; do
+  [[ "$p" == /* && "$p" != "/" ]] || { echo "PRIVATE_DR_ACCEPTANCE=FAIL reason=absolute-path-required" >&2; exit 2; }
+  [[ -f "$p" && -r "$p" ]] || { echo "PRIVATE_DR_ACCEPTANCE=FAIL reason=missing-input" >&2; exit 2; }
+done
+
+runtime_env="${PRIVATE_DR_RUNTIME_ENV_FILE:-${ENV_FILE:-$ROOT/.env.kaggle}}"
+[[ "$runtime_env" == /* && "$runtime_env" != "/" && -f "$runtime_env" && -r "$runtime_env" ]] || {
+  echo "PRIVATE_DR_ACCEPTANCE=FAIL reason=runtime-env-unavailable" >&2
+  exit 2
+}
+export ENV_FILE=/dev/null
+# shellcheck disable=SC1091
+source "$ROOT/activate-runtime.sh" >/dev/null
+# Load trusted external runtime settings for local DB/Redis/secret-key configuration.
+set -a
+# shellcheck disable=SC1090
+source "$runtime_env"
+set +a
+
+services_ready=yes
+pg_isready -h 127.0.0.1 -p "${PG_PORT:-5432}" >/dev/null 2>&1 || services_ready=no
+if [[ -n "${REDIS_PASSWORD:-}" && -n "${REDIS_PORT:-}" ]]; then
+  REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli -h 127.0.0.1 -p "$REDIS_PORT" PING 2>/dev/null | grep -q PONG || services_ready=no
+else
+  services_ready=no
+fi
+
+if [[ "$services_ready" != "yes" ]]; then
+  echo "PRIVATE_DR_RUNTIME_SELF_HEAL=BEGIN"
+  START_SERVER=0 RUN_TESTS=0 ENV_FILE="$runtime_env" "$ROOT/bootstrap.sh" start >/dev/null
+  set -a
+  # shellcheck disable=SC1090
+  source "$runtime_env"
+  set +a
+  pg_isready -h 127.0.0.1 -p "${PG_PORT:-5432}" >/dev/null
+  REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli -h 127.0.0.1 -p "$REDIS_PORT" PING 2>/dev/null | grep -q PONG
+  echo "PRIVATE_DR_RUNTIME_SELF_HEAL=PASS"
+else
+  echo "PRIVATE_DR_RUNTIME_SELF_HEAL=SKIP"
+fi
+
+evidence="${evidence:-$ROOT/tmp/release-artifacts/PRIVATE-DR-RESTORE-ACCEPTANCE.json}"
+[[ "$evidence" == /* && "$evidence" != "/" ]] || { echo "PRIVATE_DR_ACCEPTANCE=FAIL reason=evidence-absolute-path-required" >&2; exit 2; }
+mkdir -p "$(dirname "$evidence")"
+
+runtime_root="${RUNTIME_ROOT:?RUNTIME_ROOT must be set by activate-runtime}"
+stage_root="$runtime_root/private-dr-acceptance"
+mkdir -p "$stage_root"
+chmod 700 "$stage_root"
+stage="$(mktemp -d "$stage_root/run.XXXXXX")"
+chmod 700 "$stage"
+
+if [[ -n "$requested_db_name" ]]; then
+  [[ "$requested_db_name" =~ ^[a-z][a-z0-9_]{0,62}$ ]] || {
+    echo "PRIVATE_DR_ACCEPTANCE=FAIL reason=invalid-database-name" >&2
+    exit 2
+  }
+  db_name="$requested_db_name"
+else
+  db_name="ruby_envelope_vault_dr_accept_$(date -u +%Y%m%d%H%M%S)_$$"
+fi
+server_pid=""
+server_pidfile=""
+db_created=0
+preserve_db=0
+plaintext_dump="$stage/database.dump"
+production_env="$stage/production.env"
+normalized_aws="$stage/aws.normalized.env"
+
+pg_bindir="$(pg_config --bindir)"
+pg_socket="$runtime_root/postgres/socket"
+pg_port="${PG_PORT:-5432}"
+app_user="${POSTGRES_APP_USER:-vault_user}"
+
+cleanup() {
+  rc=$?
+  set +e
+  if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
+    kill "$server_pid" 2>/dev/null || true
+    for _ in $(seq 1 30); do
+      kill -0 "$server_pid" 2>/dev/null || break
+      sleep 0.2
+    done
+    if kill -0 "$server_pid" 2>/dev/null; then
+      kill -KILL "$server_pid" 2>/dev/null || true
+    fi
+    wait "$server_pid" 2>/dev/null || true
+  fi
+  if [[ -n "$server_pidfile" && -f "$server_pidfile" ]]; then
+    pidfile_pid="$(tr -d '[:space:]' < "$server_pidfile" 2>/dev/null || true)"
+    [[ "$pidfile_pid" == "$server_pid" ]] && rm -f "$server_pidfile"
+  fi
+  if [[ "$db_created" == "1" && "$preserve_db" != "1" ]]; then
+    "$pg_bindir/dropdb" -h "$pg_socket" -p "$pg_port" -U postgres --if-exists --force "$db_name" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$stage"
+  exit "$rc"
+}
+trap cleanup EXIT
+
+outer_mode="$(stat -c '%a' "$outer_key" 2>/dev/null || stat -f '%Lp' "$outer_key")"
+[[ "$outer_mode" == "600" || "$outer_mode" == "400" ]] || {
+  echo "PRIVATE_DR_ACCEPTANCE=FAIL reason=unsafe-outer-key-mode" >&2
+  exit 2
+}
+
+aws_mode="$(stat -c '%a' "$aws_secret" 2>/dev/null || stat -f '%Lp' "$aws_secret")"
+[[ "$aws_mode" == "600" || "$aws_mode" == "400" ]] || {
+  echo "PRIVATE_DR_ACCEPTANCE=FAIL reason=unsafe-aws-secret-mode" >&2
+  exit 2
+}
+REQUIRED_SECRET_VARS='AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION AWS_KMS_KEY_ID AWS_KMS_KEY01_ID AWS_KMS_KEY02_ID' \
+  "$ROOT/script/prepare-secret-env" "$aws_secret" "$normalized_aws" >/dev/null
+"$ROOT/script/aws-kms-secret-preflight" "$normalized_aws"
+echo "PRIVATE_DR_AWS_SECRET_INTAKE=PASS"
+
+set -a
+# shellcheck disable=SC1090
+source "$normalized_aws"
+set +a
+
+if [[ -f "$archive.sha256" ]]; then
+  (cd "$(dirname "$archive")" && sha256sum -c "$(basename "$archive.sha256")" >/dev/null)
+  echo "PRIVATE_DR_OUTER_SHA256=PASS"
+else
+  echo "PRIVATE_DR_OUTER_SHA256=SKIP"
+fi
+
+outer_tar="$stage/private-dr.tar.gz"
+age -d -i "$outer_key" -o "$outer_tar" "$archive"
+chmod 600 "$outer_tar"
+tar -C "$stage" -xzf "$outer_tar"
+rm -f "$outer_tar"
+echo "PRIVATE_DR_OUTER_DECRYPT=PASS"
+
+bundle_dir="$(find "$stage" -mindepth 1 -maxdepth 1 -type d ! -name 'run.*' | head -1)"
+[[ -n "$bundle_dir" && -f "$bundle_dir/MANIFEST-SHA256.txt" ]] || {
+  echo "PRIVATE_DR_ACCEPTANCE=FAIL reason=invalid-inner-bundle" >&2
+  exit 2
+}
+(cd "$bundle_dir" && sha256sum -c MANIFEST-SHA256.txt >/dev/null)
+echo "PRIVATE_DR_INTERNAL_MANIFEST=PASS"
+
+enc_dump="$(find "$bundle_dir/database" -maxdepth 1 -type f -name '*.dump.age' | head -1)"
+inner_key="$bundle_dir/secrets/recovery.agekey"
+[[ -f "$enc_dump" && -f "$inner_key" ]] || {
+  echo "PRIVATE_DR_ACCEPTANCE=FAIL reason=missing-database-material" >&2
+  exit 2
+}
+[[ -f "$enc_dump.sha256" ]] && (cd "$(dirname "$enc_dump")" && sha256sum -c "$(basename "$enc_dump.sha256")" >/dev/null)
+echo "PRIVATE_DR_DATABASE_CIPHERTEXT=PASS"
+
+age -d -i "$inner_key" -o "$plaintext_dump" "$enc_dump"
+chmod 600 "$plaintext_dump"
+pg_restore --list "$plaintext_dump" >/dev/null
+sha256sum "$plaintext_dump" > "$plaintext_dump.sha256"
+chmod 600 "$plaintext_dump.sha256"
+echo "PRIVATE_DR_DATABASE_DECRYPT=PASS"
+
+"$pg_bindir/createdb" -h "$pg_socket" -p "$pg_port" -U postgres -O "$app_user" "$db_name"
+db_created=1
+
+target_database_url="$(python3 - "$DATABASE_URL" "$db_name" <<'PY'
+import sys
+from urllib.parse import urlsplit, urlunsplit
+u=urlsplit(sys.argv[1])
+print(urlunsplit((u.scheme,u.netloc,"/"+sys.argv[2],u.query,u.fragment)))
+PY
+)"
+
+TARGET_DATABASE_URL="$target_database_url" "$ROOT/script/restore-db" "$plaintext_dump"
+rm -f "$plaintext_dump"
+echo "PRIVATE_DR_DATABASE_RESTORE=PASS"
+
+counts="$("$pg_bindir/psql" -h "$pg_socket" -p "$pg_port" -U postgres -d "$db_name" -Atqc "
+select 'users='||count(*) from users;
+select 'vault_items='||count(*) from vault_items;
+select 'vault_item_versions='||count(*) from vault_item_versions;
+select 'key_registries='||count(*) from key_registries;
+select 'audit_events='||count(*) from audit_events;
+")"
+printf '%s\n' "$counts"
+
+umask 077
+{
+  printf 'export RAILS_ENV=production\n'
+  printf 'export DATABASE_URL=%q\n' "$target_database_url"
+  printf 'export REDIS_URL=%q\n' "$REDIS_URL"
+  printf 'export SECRET_KEY_BASE=%q\n' "$SECRET_KEY_BASE"
+  printf 'export VAULT_KEY_PROVIDER=aws_kms\n'
+  printf 'export VAULT_ACTIVE_KEK_ID=%q\n' "$AWS_KMS_KEY_ID"
+  printf 'export AWS_ACCESS_KEY_ID=%q\n' "$AWS_ACCESS_KEY_ID"
+  printf 'export AWS_SECRET_ACCESS_KEY=%q\n' "$AWS_SECRET_ACCESS_KEY"
+  printf 'export AWS_REGION=%q\n' "$AWS_REGION"
+  printf 'export AWS_KMS_KEY_ID=%q\n' "$AWS_KMS_KEY_ID"
+  printf 'export AWS_KMS_KEY01_ID=%q\n' "$AWS_KMS_KEY01_ID"
+  printf 'export AWS_KMS_KEY02_ID=%q\n' "$AWS_KMS_KEY02_ID"
+  printf 'export APP_HOSTS=localhost\n'
+  printf 'export DEMO_MODE=true\n'
+  printf 'export FORCE_SSL=false\n'
+  printf 'export ALLOW_SIGNUPS=false\n'
+  printf 'export REQUIRE_MFA=false\n'
+  printf 'export REAUTH_ON_REVEAL=false\n'
+} > "$production_env"
+chmod 600 "$production_env"
+
+export PRODUCTION_ENV_FILE="$production_env"
+export RAILS_ENV=production
+set -a
+# shellcheck disable=SC1090
+source "$production_env"
+set +a
+
+ENV_FILE=/dev/null bin/rails runner '
+provider = KeyProviders::Registry.fetch
+provider.assert_write_allowed!
+u = User.order(:created_at).first or abort("PRIVATE_DR_HISTORICAL_DECRYPT=FAIL no-user")
+i = VaultItem.where(user_id: u.id).order(:created_at).first or abort("PRIVATE_DR_HISTORICAL_DECRYPT=FAIL no-item")
+payload = Vault::RevealItem.call(user: u, item: i, audit: false)
+abort("PRIVATE_DR_HISTORICAL_DECRYPT=FAIL invalid-payload") unless payload.is_a?(Hash) && payload.present?
+puts "PRIVATE_DR_HISTORICAL_DECRYPT=PASS"
+'
+
+port="${PRIVATE_DR_PORT:-3017}"
+while python3 - "$port" <<'PY'
+import socket,sys
+s=socket.socket()
+try:
+    raise SystemExit(0 if s.connect_ex(("127.0.0.1",int(sys.argv[1]))) != 0 else 1)
+finally:
+    s.close()
+PY
+do
+  break
+done
+if python3 - "$port" <<'PY'
+import socket,sys
+s=socket.socket()
+try:
+    raise SystemExit(0 if s.connect_ex(("127.0.0.1",int(sys.argv[1]))) == 0 else 1)
+finally:
+    s.close()
+PY
+then
+  echo "PRIVATE_DR_ACCEPTANCE=FAIL reason=port-in-use" >&2
+  exit 2
+fi
+
+server_pidfile="$ROOT/tmp/pids/server-$port.pid"
+PRODUCTION_ENV_FILE="$production_env" PRODUCTION_PORT="$port" PRODUCTION_DATABASE_CONTRACT_MODE=isolated "$ROOT/script/start-production" >"$stage/puma.log" 2>&1 &
+server_pid=$!
+
+up=000
+ready=000
+for _ in $(seq 1 40); do
+  up="$(curl --max-time 2 -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/up" 2>/dev/null || true)"
+  ready="$(curl --max-time 10 -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/ready" 2>/dev/null || true)"
+  [[ "$up" == "200" && "$ready" == "200" ]] && break
+  kill -0 "$server_pid" 2>/dev/null || break
+  sleep 1
+done
+[[ "$up" == "200" && "$ready" == "200" ]] || {
+  echo "PRIVATE_DR_ACCEPTANCE=FAIL reason=http-readiness up=$up ready=$ready" >&2
+  exit 3
+}
+echo "PRIVATE_DR_UP=200"
+echo "PRIVATE_DR_READY=200"
+
+archive_name="$(basename "$archive")"
+generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+USERS="$(printf '%s\n' "$counts" | sed -n 's/^users=//p')" \
+ITEMS="$(printf '%s\n' "$counts" | sed -n 's/^vault_items=//p')" \
+VERSIONS="$(printf '%s\n' "$counts" | sed -n 's/^vault_item_versions=//p')" \
+KEYS="$(printf '%s\n' "$counts" | sed -n 's/^key_registries=//p')" \
+AUDIT="$(printf '%s\n' "$counts" | sed -n 's/^audit_events=//p')" \
+DB_NAME="$db_name" ARCHIVE_NAME="$archive_name" GENERATED_AT="$generated_at" KEEP_DB="$keep_db" python3 - "$evidence" <<'PY'
+import json, os, sys
+from pathlib import Path
+out=Path(sys.argv[1])
+data={
+  "schema_version": 1,
+  "generated_at": os.environ["GENERATED_AT"],
+  "artifact": os.environ["ARCHIVE_NAME"],
+  "outer_decrypt": "pass",
+  "internal_manifest": "pass",
+  "database_ciphertext": "pass",
+  "database_restore": "pass",
+  "aws_secret_intake": "pass",
+  "aws_active_alias_preflight": "pass",
+  "historical_decrypt": "pass",
+  "http_up": 200,
+  "http_ready": 200,
+  "database_name": os.environ["DB_NAME"],
+  "database_counts": {
+    "users": int(os.environ["USERS"]),
+    "vault_items": int(os.environ["ITEMS"]),
+    "vault_item_versions": int(os.environ["VERSIONS"]),
+    "key_registries": int(os.environ["KEYS"]),
+    "audit_events": int(os.environ["AUDIT"]),
+  },
+  "database_kept": os.environ["KEEP_DB"] == "1",
+  "credential_values_recorded": False,
+  "key_ids_recorded": False,
+  "plaintext_recorded": False,
+}
+out.write_text(json.dumps(data, sort_keys=True, indent=2)+"\n")
+out.chmod(0o644)
+PY
+
+echo "PRIVATE_DR_EVIDENCE=PASS path=$evidence"
+echo "PRIVATE_DR_ACCEPTANCE=PASS"
+
+if [[ "$keep_db" == "1" ]]; then
+  preserve_db=1
+  db_created=0
+  echo "PRIVATE_DR_DATABASE_KEEP=YES"
+fi
