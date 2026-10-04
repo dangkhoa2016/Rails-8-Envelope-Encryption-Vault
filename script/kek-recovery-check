@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd "$(dirname "$0")/.."
+
+: "${RECOVERY_KEK_DIR:?RECOVERY_KEK_DIR is required}"
+: "${VAULT_KEK_DIR:?VAULT_KEK_DIR is required}"
+
+active_dir="$(cd "$VAULT_KEK_DIR" && pwd -P)"
+[ -d "$RECOVERY_KEK_DIR" ] || { echo "ERROR recovery KEK directory does not exist" >&2; exit 1; }
+recovery_dir="$(cd "$RECOVERY_KEK_DIR" && pwd -P)"
+[ "$active_dir" != "$recovery_dir" ] || { echo "ERROR recovery KEK directory must be separate from active KEK directory" >&2; exit 1; }
+
+mapfile -t required_ids < <(bin/rails runner '
+  ids = []
+  ids.concat(VaultItemVersion.distinct.pluck(:kek_id))
+  ids.concat(MfaSetting.distinct.pluck(:kek_id))
+  puts ids.compact.uniq.sort
+')
+
+if [ "${#required_ids[@]}" -eq 0 ]; then
+  echo "PASS KEK recovery custody no referenced KEKs"
+  exit 0
+fi
+
+status=0
+for kid in "${required_ids[@]}"; do
+  [[ "$kid" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || { echo "FAIL invalid KEK id=$kid" >&2; status=1; continue; }
+  active="$active_dir/$kid.key"
+  recovery="$recovery_dir/$kid.key"
+
+  if [ ! -f "$active" ]; then
+    echo "FAIL active KEK missing id=$kid" >&2
+    status=1
+    continue
+  fi
+  if [ ! -f "$recovery" ]; then
+    echo "FAIL recovery KEK missing id=$kid" >&2
+    status=1
+    continue
+  fi
+  [ "$(wc -c < "$recovery")" -eq 32 ] || { echo "FAIL recovery KEK wrong size id=$kid" >&2; status=1; continue; }
+
+  active_sha="$(sha256sum "$active" | awk '{print $1}')"
+  recovery_sha="$(sha256sum "$recovery" | awk '{print $1}')"
+  if [ "$active_sha" != "$recovery_sha" ]; then
+    echo "FAIL recovery KEK fingerprint mismatch id=$kid" >&2
+    status=1
+    continue
+  fi
+  mode="$(stat -c %a "$recovery" 2>/dev/null || true)"
+  case "$mode" in
+    400|600) ;;
+    *) echo "FAIL recovery KEK permissions id=$kid mode=${mode:-unknown}" >&2; status=1; continue ;;
+  esac
+
+  echo "PASS recovery KEK id=$kid fingerprint=${active_sha:0:16}"
+done
+
+if [ "$status" -eq 0 ]; then
+  echo "PASS KEK recovery custody count=${#required_ids[@]}"
+else
+  echo "FAIL KEK recovery custody" >&2
+fi
+exit "$status"

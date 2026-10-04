@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+provision=0
+[[ "${1:-}" == "--provision" ]] && provision=1
+
+runtime_root="${RUNTIME_ROOT:-}"
+if [[ -z "$runtime_root" ]]; then
+  if [[ -d /content && -w /content ]]; then
+    runtime_root=/content/.ruby-envelope-vault-runtime
+  else
+    runtime_root="${XDG_STATE_HOME:-$HOME/.local/state}/ruby-envelope-vault/runtime"
+  fi
+fi
+
+candidates=()
+[[ -n "${RCLONE_BIN:-}" ]] && candidates+=("$RCLONE_BIN")
+candidates+=("$runtime_root/bin/rclone")
+if command -v rclone >/dev/null 2>&1; then
+  candidates+=("$(command -v rclone)")
+fi
+
+for candidate in "${candidates[@]}"; do
+  [[ -n "$candidate" && -x "$candidate" ]] || continue
+  if "$candidate" version >/dev/null 2>&1; then
+    printf '%s\n' "$(cd "$(dirname "$candidate")" && pwd -P)/$(basename "$candidate")"
+    exit 0
+  fi
+done
+
+if [[ "$provision" == "1" ]]; then
+  "$ROOT/script/provision-rclone" >/dev/null
+  exec "$0"
+fi
+
+echo "RCLONE_RESOLVE=FAIL reason=binary-not-found" >&2
+exit 2

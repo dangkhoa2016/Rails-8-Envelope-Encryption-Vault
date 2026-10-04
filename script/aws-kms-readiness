@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$ROOT"
+
+region="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
+key_id="${AWS_KMS_KEY_ID:-}"
+
+printf 'AWS_KMS_REGION=%s\n' "$([[ -n "$region" ]] && printf configured || printf missing)"
+printf 'AWS_KMS_KEY_ID=%s\n' "$([[ -n "$key_id" ]] && printf configured || printf missing)"
+
+credential_hint="none"
+if [[ -n "${AWS_PROFILE:-}" ]]; then
+  credential_hint="profile"
+elif [[ -n "${AWS_ROLE_ARN:-}" && -n "${AWS_WEB_IDENTITY_TOKEN_FILE:-}" ]]; then
+  credential_hint="web-identity"
+elif [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
+  credential_hint="environment"
+fi
+printf 'AWS_CREDENTIAL_SOURCE_HINT=%s\n' "$credential_hint"
+
+if bundle exec ruby -e 'require "aws-sdk-kms"' >/dev/null 2>&1; then
+  printf 'AWS_KMS_SDK=ready\n'
+else
+  printf 'AWS_KMS_SDK=missing\n'
+  exit 1
+fi
+if [[ -z "$region" || -z "$key_id" || "$credential_hint" == "none" ]]; then
+  printf 'AWS_KMS_LIVE_READY=NO\n'
+  exit 2
+fi
+
+bundle exec ruby -I. -e '
+  require "./app/services/key_providers/aws_kms_client"
+  client = KeyProviders::AwsKmsClient.new(region: ENV.fetch("AWS_REGION", ENV["AWS_DEFAULT_REGION"]))
+  if client.key_available?(key_id: ENV.fetch("AWS_KMS_KEY_ID"))
+    puts "AWS_KMS_DESCRIBE_KEY=PASS"
+  else
+    puts "AWS_KMS_DESCRIBE_KEY=NOT_FOUND_OR_DISABLED"
+    exit 3
+  end
+'
+
+if RAILS_ENV=production bin/rails runner '
+  provider = KeyProviders::Registry.fetch
+  provider.assert_write_allowed!
+  puts "AWS_KMS_REGISTRY_ACTIVE_MATCH=PASS"
+' 2>/dev/null; then
+  :
+else
+  printf 'AWS_KMS_REGISTRY_ACTIVE_MATCH=FAIL\n'
+  exit 4
+fi
+
+printf 'AWS_KMS_LIVE_READY=YES\n'
