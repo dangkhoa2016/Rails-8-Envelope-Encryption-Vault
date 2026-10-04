@@ -1,0 +1,15 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RubyEnvelopeVaultKmsRuntime",
+      "Effect": "Allow",
+      "Action": [
+        "kms:DescribeKey",
+        "kms:Encrypt",
+        "kms:Decrypt"
+      ],
+      "Resource": "REPLACE_WITH_EXACT_KMS_KEY_ARN"
+    }
+  ]
+}
