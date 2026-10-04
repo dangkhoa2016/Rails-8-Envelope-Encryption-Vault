@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+BUNDLE="${1:?usage: new-host-acceptance MIGRATION_BUNDLE.tar.gz}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+OUT="${NEW_HOST_ACCEPTANCE_OUT:-$ROOT/tmp/release-artifacts/NEW-HOST-RECOVERY-SUMMARY.json}"
+SESSION="rev-newhost-acceptance-$$"
+tmp="$(mktemp -d)"
+chmod 711 "$tmp"
+runtime_root="${NEW_HOST_RUNTIME_ROOT:-$tmp/runtime}"
+install_root="$tmp/install"
+secret_root="$tmp/secrets"
+summary="$tmp/NEW-HOST-RECOVERY-SUMMARY.json"
+before_current="$(readlink -f "$(dirname "$ROOT")/current" 2>/dev/null || true)"
+
+cleanup() {
+  tmux kill-session -t "$SESSION" 2>/dev/null || true
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+
+port="$(python3 - <<'PY'
+import socket
+for p in range(3100, 3200):
+    s=socket.socket()
+    try:
+        s.bind(("127.0.0.1", p))
+    except OSError:
+        s.close()
+        continue
+    s.close()
+    print(p)
+    break
+else:
+    raise SystemExit("no free acceptance port")
+PY
+)"
+env -u ENV_FILE -u RUNTIME_ROOT NEW_HOST_INSTALL_ROOT="$install_root" NEW_HOST_SECRET_ROOT="$secret_root" NEW_HOST_SUMMARY_OUT="$summary" NEW_HOST_PORT="$port" NEW_HOST_TMUX_SESSION="$SESSION" NEW_HOST_TMUX_WINDOW_INDEX=0 NEW_HOST_BOOTSTRAP_MODE=auto NEW_HOST_RUN_TESTS=0 NEW_HOST_RUNTIME_ROOT="$runtime_root" "$ROOT/script/restore-new-host" "$BUNDLE"
+
+after_current="$(readlink -f "$(dirname "$ROOT")/current" 2>/dev/null || true)"
+[[ "$after_current" == "$before_current" ]] || {
+  echo "ERROR new-host acceptance changed live current: $before_current -> $after_current" >&2
+  exit 1
+}
+
+python3 - "$summary" <<'PY'
+import json,sys
+from pathlib import Path
+p=Path(sys.argv[1]); d=json.loads(p.read_text())
+checks={
+    "source_restored": True,
+    "secrets_restored": True,
+    "executable_repair": True,
+    "project_doctor": "pass",
+    "health": 200,
+}
+for k,v in checks.items():
+    if d.get(k) != v:
+        raise SystemExit(f"new-host acceptance summary mismatch: {k}={d.get(k)!r} expected {v!r}")
+PY
+
+mkdir -p "$(dirname "$OUT")"
+cp "$summary" "$OUT"
+chmod 644 "$OUT"
+echo "NEW_HOST_ACCEPTANCE_GATE=PASS summary=$OUT port=$port"

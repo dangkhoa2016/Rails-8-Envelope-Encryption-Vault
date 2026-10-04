@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+status=0
+fail() { echo "FAIL: $*" >&2; status=1; }
+
+if [ -e .bundle/config ]; then
+  fail ".bundle/config must not be shipped in the source tree"
+fi
+
+if grep -R -n -F "/kaggle/working" script ops bin config   --exclude-dir=.git --exclude='portability-check' --exclude='restore-new-host' --exclude='build-current-migration-bundle' >/tmp/revault-portability-paths.txt 2>/dev/null; then
+  cat /tmp/revault-portability-paths.txt >&2
+  fail "deployment/runtime files contain hardcoded /kaggle/working paths"
+fi
+rm -f /tmp/revault-portability-paths.txt
+
+
+[ -x activate-runtime.sh ] || fail "portable activation helper is missing or not executable"
+grep -Fq '/content/.ruby-envelope-vault-runtime' activate-runtime.sh ||
+  fail "Colab runtime default is missing from activate-runtime.sh"
+grep -Fq 'XDG_STATE_HOME' activate-runtime.sh ||
+  fail "generic Linux runtime fallback is missing from activate-runtime.sh"
+grep -Fq 'source "$ROOT/activate-runtime.sh"' activate-kaggle.sh ||
+  fail "activate-kaggle.sh must remain a compatibility wrapper"
+grep -Fq 'apt_first_available libasound2t64 libasound2' bootstrap.sh ||
+  fail "cross-Ubuntu ALSA package selection is missing"
+grep -Fq 'BUNDLE_PATH="$BUNDLE_DIR" bundle install' bootstrap.sh ||
+  fail "bundle install must use runtime BUNDLE_PATH without source-local config"
+
+grep -Fq 'REV_SECRETS_ROOT' script/build-current-migration-bundle ||
+  fail "migration bundle builder must accept explicit secrets root"
+grep -Fq 'set REV_SECRETS_ROOT' script/build-current-migration-bundle ||
+  fail "migration bundle builder must fail clearly when secrets root cannot be discovered"
+
+grep -Fq 'UPGRADE_BASE_ROOT' script/upgrade-from-fix46-preflight ||
+  fail "FIX46 upgrade preflight must accept an explicit baseline override"
+if grep -Fq '/mnt/workspace/ruby-envelope-vault/FIX46' script/upgrade-from-fix46-preflight; then
+  fail "FIX46 upgrade preflight must not depend on a host-specific historical source path"
+fi
+grep -Fq '20260927001300_add_totp_replay_protection.rb' script/upgrade-from-fix46-preflight ||
+  fail "FIX46 upgrade preflight must embed the accepted migration-set contract"
+
+grep -Fq 'default_install_root()' script/restore-new-host ||
+  fail "restore-new-host portable install-root selection is missing"
+grep -Fq 'RAILS_START_MODE=nohup' script/restore-new-host ||
+  fail "restore-new-host nohup fallback is missing"
+
+while IFS= read -r file; do
+  [ -x "$file" ] || fail "operational script is not executable: $file"
+  mode="$(stat -c '%a' "$file")"
+  case "$mode" in
+    755|750|700) ;;
+    *) fail "unexpected operational script mode $mode: $file" ;;
+  esac
+done < <(find script -maxdepth 1 -type f -print | LC_ALL=C sort)
+
+expected_socket='/var/run/postgresql'
+grep -Fq 'DR_LOCAL_PG_SOCKET:-/var/run/postgresql' script/dr-rehearsal ||
+  fail "dr-rehearsal portable PostgreSQL socket default is missing"
+
+grep -Fq 'DR_ADMIN_MODE:-auto' script/dr-rehearsal ||
+  fail "dr-rehearsal DR_ADMIN_MODE auto default is missing"
+grep -Fq 'admin_mode="local-postgres"' script/dr-rehearsal ||
+  fail "dr-rehearsal local-postgres admin mode is missing"
+grep -Fq 'source_host_decoded' script/dr-rehearsal ||
+  fail "dr-rehearsal Unix-socket host detection is missing"
+grep -Fq 'DR_APP_OS_USER' script/dr-rehearsal ||
+  fail "dr-rehearsal app OS peer-auth user handling is missing"
+grep -Fq 'DR_APP_OS_USER' script/offsite-dr-rehearsal ||
+  fail "offsite DR peer-auth staging handoff is missing"
+
+grep -Fq 'User=root' ops/systemd/ruby-envelope-vault-dr.service ||
+  fail "DR systemd service must use root orchestration"
+grep -Fq 'Environment=OPS_SERVICE_USER=ruby-vault' ops/systemd/ruby-envelope-vault-dr.service ||
+  fail "DR systemd service must preserve shared ops ownership"
+grep -Fq 'OPS_POSTGRES_BIN' script/scheduled-ops ||
+  fail "scheduled-ops PostgreSQL tool pinning is missing"
+grep -Fq 'dst_resolved=' script/install-ops-scheduler ||
+  fail "scheduler installer symlink-safe source detection is missing"
+[ -x script/live-host-acceptance ] ||
+  fail "live-host acceptance script is missing or not executable"
+grep -Fq 'FINAL_LIVE_HOST_SYSTEMD_ACCEPTANCE=PASS' script/live-host-acceptance ||
+  fail "live-host post-reboot acceptance marker is missing"
+grep -Fq '/proc/sys/kernel/random/boot_id' script/live-host-acceptance ||
+  fail "live-host reboot identity check is missing"
+
+[ "$status" -eq 0 ] && echo "PASS portability policy"
+exit "$status"
