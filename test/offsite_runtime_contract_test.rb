@@ -94,6 +94,65 @@ class OffsiteRuntimeContractTest < ActiveSupport::TestCase
     end
   end
 
+  test "capability preflight consumes multiline rclone version without SIGPIPE" do
+    Dir.mktmpdir do |dir|
+      fake = File.join(dir, "rclone")
+      config = File.join(dir, "rclone.conf")
+
+      File.write(fake, <<~SH)
+        #!/bin/sh
+        args="$*"
+        case "$args" in
+          *" version"|"version")
+            echo "rclone v9.9.9-test"
+            i=0
+            while [ "$i" -lt 20000 ]; do
+              echo "detail line $i"
+              i=$((i + 1))
+            done
+            exit 0
+            ;;
+          *"config dump"*)
+            echo '{"remote":{"type":"s3"}}'
+            exit 0
+            ;;
+          *" lsf "*)
+            exit 0
+            ;;
+        esac
+        exit 1
+      SH
+      File.chmod(0o755, fake)
+      File.write(config, "[remote]\ntype = s3\n")
+      File.chmod(0o600, config)
+
+      stdout, stderr, status = Open3.capture3(
+        { "RCLONE_BIN" => fake, "RUNTIME_ROOT" => File.join(dir, "runtime"), "PATH" => "/usr/bin:/bin" },
+        PREFLIGHT.to_s,
+        "--dest", "remote:release-check/",
+        "--config", config
+      )
+
+      assert status.success?, "expected no SIGPIPE/141 failure: #{stderr}"
+      assert_includes stdout, "OFFSITE_CAPABILITY=PASS"
+      assert_includes stdout, "RCLONE_VERSION=rclone v9.9.9-test"
+    end
+  end
+
+  test "pipefail operational scripts do not truncate producers with head" do
+    candidates = [ Rails.root.join("bootstrap.sh"), *Rails.root.join("script").children.select(&:file?) ]
+
+    offenders = candidates.filter_map do |path|
+      content = path.read
+      next unless content.include?("pipefail")
+      next unless content.match?(/\|\s*head\b/)
+
+      path.relative_path_from(Rails.root).to_s
+    end
+
+    assert_empty offenders, "unsafe pipefail/head pipelines: #{offenders.join(", ")}"
+  end
+
   test "capability preflight rejects unsafe config permissions" do
     Dir.mktmpdir do |dir|
       config = File.join(dir, "rclone.conf")

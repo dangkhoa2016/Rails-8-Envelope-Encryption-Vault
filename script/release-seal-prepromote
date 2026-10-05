@@ -91,7 +91,7 @@ chmod 644 "$ARTIFACT_DIR/PUBLIC-PACKAGE-INTEGRITY.json"
 bundle="$ARTIFACT_DIR/${name}-MIGRATION-BUNDLE.tar.gz"
 mkdir -p "$restore/unpack" "$restore/install" "$restore/secrets"
 tar -C "$restore/unpack" -xzf "$bundle"
-bundle_dir="$(find "$restore/unpack" -mindepth 1 -maxdepth 1 -type d | head -1)"
+bundle_dir="$(find "$restore/unpack" -mindepth 1 -maxdepth 1 -type d -print -quit)"
 INSTALL_ROOT="$restore/install" SECRET_ROOT="$restore/secrets" "$bundle_dir/restore-to-linux.sh" >/dev/null
 test "$(cat "$restore/install/$RELEASE_NAME/VERSION")" = "$VERSION"
 test "$(stat -c %a "$restore/secrets")" = 700

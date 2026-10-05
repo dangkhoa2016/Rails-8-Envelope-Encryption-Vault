@@ -60,7 +60,7 @@ fi
 
 mkdir -p "$tmp/unpack"
 tar -C "$tmp/unpack" -xzf "$BUNDLE"
-bundle_dir="$(find "$tmp/unpack" -mindepth 1 -maxdepth 1 -type d | head -1)"
+bundle_dir="$(find "$tmp/unpack" -mindepth 1 -maxdepth 1 -type d -print -quit)"
 [[ -n "$bundle_dir" && -f "$bundle_dir/MANIFEST-SHA256.txt" ]] || { echo "ERROR invalid migration bundle" >&2; exit 1; }
 ( cd "$bundle_dir" && sha256sum -c MANIFEST-SHA256.txt >/dev/null )
 echo "BUNDLE_INTERNAL_VERIFY=PASS"

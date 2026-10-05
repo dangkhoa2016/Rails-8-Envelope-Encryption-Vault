@@ -43,10 +43,15 @@ dest="$dest_dir/rclone"
 mkdir -p "$dest_dir"
 chmod 700 "$dest_dir" 2>/dev/null || true
 
-if [[ -x "$dest" ]] && "$dest" version 2>/dev/null | head -1 | grep -q "v${VERSION}"; then
-  echo "RCLONE_PROVISION=PASS status=already-present version=$VERSION"
-  echo "RCLONE_BINARY_SHA256=$(sha256sum "$dest" | awk '{print $1}')"
-  exit 0
+if [[ -x "$dest" ]]; then
+  if dest_version_output="$("$dest" version 2>/dev/null)"; then
+    dest_version_line="${dest_version_output%%$'\n'*}"
+    if [[ "$dest_version_line" == *"v${VERSION}"* ]]; then
+      echo "RCLONE_PROVISION=PASS status=already-present version=$VERSION"
+      echo "RCLONE_BINARY_SHA256=$(sha256sum "$dest" | awk '{print $1}')"
+      exit 0
+    fi
+  fi
 fi
 
 archive="rclone-v${VERSION}-linux-${arch}.zip"
@@ -62,9 +67,14 @@ actual_sha="$(sha256sum "$work/$archive" | awk '{print $1}')"
 }
 
 unzip -q "$work/$archive" -d "$work/unpacked"
-binary="$(find "$work/unpacked" -type f -name rclone -perm -u+x | head -1)"
+binary="$(find "$work/unpacked" -type f -name rclone -perm -u+x -print -quit)"
 [[ -n "$binary" && -x "$binary" ]] || { echo "RCLONE_PROVISION=FAIL reason=binary-missing-from-archive" >&2; exit 2; }
-"$binary" version 2>/dev/null | head -1 | grep -q "v${VERSION}" || { echo "RCLONE_PROVISION=FAIL reason=version-mismatch" >&2; exit 2; }
+if ! binary_version_output="$("$binary" version 2>/dev/null)"; then
+  echo "RCLONE_PROVISION=FAIL reason=version-mismatch" >&2
+  exit 2
+fi
+binary_version_line="${binary_version_output%%$'\n'*}"
+[[ "$binary_version_line" == *"v${VERSION}"* ]] || { echo "RCLONE_PROVISION=FAIL reason=version-mismatch" >&2; exit 2; }
 
 install -m 755 "$binary" "$dest"
 binary_sha="$(sha256sum "$dest" | awk '{print $1}')"

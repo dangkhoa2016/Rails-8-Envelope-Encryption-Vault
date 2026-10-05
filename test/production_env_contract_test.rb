@@ -123,8 +123,12 @@ class ProductionEnvContractTest < ActiveSupport::TestCase
 
       assert status.success?, stderr
       assert_includes stdout, "REBUILD_PRODUCTION_ENV=PASS"
+      db_stdout, db_stderr, db_status = Open3.capture3(Rails.root.join("script/production-database-name").to_s)
+      assert db_status.success?, db_stderr
+      expected_db = db_stdout.strip
+
       body = File.read(output)
-      assert_includes body, "ruby_envelope_vault_production_v0_1_8_1"
+      assert_includes body, expected_db
       assert_includes body, "VAULT_KEY_PROVIDER=aws_kms"
       assert_includes body, "22222222-2222-2222-2222-222222222222"
       assert_includes body, "#{"a" * 128}"

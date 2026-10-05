@@ -168,7 +168,7 @@ tar -C "$stage" -xzf "$outer_tar"
 rm -f "$outer_tar"
 echo "PRIVATE_DR_OUTER_DECRYPT=PASS"
 
-bundle_dir="$(find "$stage" -mindepth 1 -maxdepth 1 -type d ! -name 'run.*' | head -1)"
+bundle_dir="$(find "$stage" -mindepth 1 -maxdepth 1 -type d ! -name 'run.*' -print -quit)"
 [[ -n "$bundle_dir" && -f "$bundle_dir/MANIFEST-SHA256.txt" ]] || {
   echo "PRIVATE_DR_ACCEPTANCE=FAIL reason=invalid-inner-bundle" >&2
   exit 2
@@ -176,7 +176,7 @@ bundle_dir="$(find "$stage" -mindepth 1 -maxdepth 1 -type d ! -name 'run.*' | he
 (cd "$bundle_dir" && sha256sum -c MANIFEST-SHA256.txt >/dev/null)
 echo "PRIVATE_DR_INTERNAL_MANIFEST=PASS"
 
-enc_dump="$(find "$bundle_dir/database" -maxdepth 1 -type f -name '*.dump.age' | head -1)"
+enc_dump="$(find "$bundle_dir/database" -maxdepth 1 -type f -name '*.dump.age' -print -quit)"
 inner_key="$bundle_dir/secrets/recovery.agekey"
 [[ -f "$enc_dump" && -f "$inner_key" ]] || {
   echo "PRIVATE_DR_ACCEPTANCE=FAIL reason=missing-database-material" >&2

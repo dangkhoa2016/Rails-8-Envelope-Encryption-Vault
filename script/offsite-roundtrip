@@ -49,7 +49,7 @@ esac
 
 retrieved_sha="$(sha256sum "$work/$base" | awk '{print $1}')"
 [ "$retrieved_sha" = "$local_sha" ] || { echo "ERROR offsite round-trip checksum mismatch" >&2; exit 1; }
-expected_sha="$(awk '{print $1}' "$work/$checksum_base" | head -1)"
+expected_sha="$(awk 'NR == 1 { print $1 }' "$work/$checksum_base")"
 [ "$expected_sha" = "$local_sha" ] || { echo "ERROR retrieved checksum sidecar does not match backup" >&2; exit 1; }
 
 echo "PASS offsite round-trip"

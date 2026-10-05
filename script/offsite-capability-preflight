@@ -44,7 +44,8 @@ resolver_args=()
 rclone_bin="$($ROOT/script/rclone-resolve "${resolver_args[@]}")"
 [[ -x "$rclone_bin" ]] || { echo "OFFSITE_CAPABILITY=FAIL reason=resolved-binary-not-executable" >&2; exit 2; }
 
-version_line="$($rclone_bin version | head -1)"
+version_output="$("$rclone_bin" version)"
+version_line="${version_output%%$'\n'*}"
 binary_sha="$(sha256sum "$rclone_bin" | awk '{print $1}')"
 remote_type="$($rclone_bin --config "$config" config dump | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get(sys.argv[1],{}).get("type",""))' "$remote_name")"
 [[ -n "$remote_type" ]] || { echo "OFFSITE_CAPABILITY=FAIL reason=remote-not-configured" >&2; exit 2; }
