@@ -113,7 +113,7 @@ Completed on the same host while promoted 0.1.8 remained live:
 - `restore-postpromote-full-private --inspect-only` against the real promoted 0.1.8 POSTPROMOTE bundle: PASS;
 - inspect-only left `/content/current` unchanged and `RC-0.1.8` clean.
 
-Full `script/release-verify`: **PASS** for `0.1.8.1-dev` after the cross-version correction (205 Rails tests / 2,006 assertions; 21 system tests / 223 assertions; 54 accessibility tests / 1,162 assertions; RuboCop clean; Brakeman 0 warnings; bundler-audit no vulnerabilities; crypto/security gates PASS).
+Full `script/release-verify`: **PASS** for `0.1.8.1-dev` on the final fresh-host code (205 Rails tests / 2,014 assertions; 21 system tests / 223 assertions; 54 accessibility tests / 1,170 assertions; RuboCop clean; Brakeman 0 warnings; bundler-audit no vulnerabilities; crypto/security gates PASS).
 
 ## Release boundary
 
@@ -156,3 +156,115 @@ The safe same-host boundary is therefore:
 - regression/release gates.
 
 The first full end-to-end restore with DB recreation, optional repoint, production start and postpromote evidence must run on a fresh Colab host.
+
+
+## Fresh-host end-to-end acceptance — 2026-10-05
+
+A completely new Google Colab CPU host was used with only the downloaded artifacts:
+
+- promoted 0.1.8 POSTPROMOTE FULL PRIVATE ciphertext;
+- its outer recovery identity and checksum;
+- the 0.1.8.1-dev source checkpoint.
+
+### Additional defects found and fixed
+
+#### `pg_restore` catalog check ran before fresh-host provisioning
+
+The first `--inspect-only` invocation correctly verified the outer archive, internal manifest and promoted metadata, but the host did not yet have PostgreSQL tooling. The earlier orchestrator incorrectly collapsed this condition into `invalid-database-dump`.
+
+The orchestrator now:
+
+- reports `reason=pg_restore-missing` explicitly for inspect-only precondition failure;
+- performs the mandatory database catalog check after bootstrap in full restore mode;
+- emits `POSTPROMOTE_DATABASE_CATALOG=PASS` only after a real `pg_restore -l` succeeds.
+
+After provisioning PostgreSQL 17.11, inspect-only passed against the real ciphertext and real production dump.
+
+#### Full-private DB dump has manifest integrity but no adjacent `.sha256`
+
+The POSTPROMOTE FULL PRIVATE bundle protects the database dump through the bundle-wide internal SHA-256 manifest. `script/restore-db`, however, also requires a sibling `.sha256` sidecar.
+
+After the internal manifest and DB catalog have both passed, the orchestrator now derives a temporary sibling sidecar from the already-verified extracted dump before calling canonical `restore-db`. The sidecar exists only in temporary extraction state and does not modify the archive or sealed 0.1.8 source.
+
+### Full one-command restore result
+
+The final fresh-host invocation used:
+
+```text
+--replace-source --repoint-current --start-production
+```
+
+and completed with:
+
+```text
+POSTPROMOTE_ARCHIVE_SHA256=PASS
+POSTPROMOTE_INTERNAL_MANIFEST=PASS
+POSTPROMOTE_BUNDLE_METADATA=PASS version=0.1.8
+POSTPROMOTE_SOURCE_VERIFY=PASS
+POSTPROMOTE_SOURCE_RESTORE=PASS
+POSTPROMOTE_PRIVATE_AUTHORITY_RESTORE=PASS
+POSTPROMOTE_BOOTSTRAP=PASS
+POSTPROMOTE_DATABASE_CATALOG=PASS
+POSTPROMOTE_PRODUCTION_ENV_REBUILD=PASS
+POSTPROMOTE_DATABASE_SIDECAR=PASS
+POSTPROMOTE_DATABASE_RESTORE=PASS database_name=ruby_envelope_vault_production_v0_1_8
+POSTPROMOTE_REPOINT=PASS current=/content/RC-0.1.8
+POSTPROMOTE_PRODUCTION_START=PASS up=200 ready=200
+POSTPROMOTE_RESTORE=PASS version=0.1.8
+```
+
+The restored stable production DB contained the expected authority counts:
+
+```text
+users=1
+vault_items=1
+vault_item_versions=1
+key_registries=2
+audit_events=92
+```
+
+### AWS KMS / historical recovery validation
+
+On the new host:
+
+- AWS secret intake and active-alias checks: PASS;
+- live AWS KMS verify/wrap/unwrap: PASS;
+- wrong-context rejection: PASS;
+- error redaction: PASS;
+- fresh-host synthetic historical decrypt/rewrap: PASS;
+- official private-DR restore acceptance: PASS;
+- actual historical decrypt from restored private DR: PASS;
+- private-DR `/up` and `/ready`: 200/200.
+
+### Drime read-after-write finding
+
+Reusing the existing root path `drime:ruby-envelope-vault/RELEASE-METADATA.json` produced a checksum mismatch because Drime returned a previous object version after overwrite; the remote metadata and its remote sidecar were internally consistent with the same old SHA.
+
+A unique acceptance prefix was created and strict capability/write probing passed:
+
+```text
+drime:ruby-envelope-vault/fresh-host-acceptance-20261005T030247Z
+```
+
+`release-postpromote-evidence` then passed against that prefix, and local metadata, remote metadata and remote sidecar all matched SHA-256:
+
+```text
+ff06b6000a1d6f4c543947eabb8feed511039e4396b07b1aff0137e39a9f35f4
+```
+
+This is treated as a backend overwrite/read-after-write behavior, not a release metadata integrity failure. Fresh acceptance and future immutable evidence uploads should use unique remote prefixes rather than overwriting a previously used evidence object name.
+
+### Final fresh-host state
+
+```text
+/content/current -> /content/RC-0.1.8
+VERSION=0.1.8
+UP=200
+READY=200
+RC_DIRTY=0
+phase=promoted
+promotion_performed=true
+offhost_roundtrip=pass
+```
+
+`RELEASE_CHECKLIST=PASS` and `RELEASE_HISTORY=PASS` were regenerated on the fresh host.
