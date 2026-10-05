@@ -113,8 +113,46 @@ Completed on the same host while promoted 0.1.8 remained live:
 - `restore-postpromote-full-private --inspect-only` against the real promoted 0.1.8 POSTPROMOTE bundle: PASS;
 - inspect-only left `/content/current` unchanged and `RC-0.1.8` clean.
 
-Full `script/release-verify`: **PASS** for `0.1.8.1-dev` (204 Rails tests / 1,995 assertions; 21 system tests / 223 assertions; RuboCop clean; Brakeman 0 warnings; bundler-audit no vulnerabilities; crypto/security/accessibility gates PASS).
+Full `script/release-verify`: **PASS** for `0.1.8.1-dev` after the cross-version correction (205 Rails tests / 2,006 assertions; 21 system tests / 223 assertions; 54 accessibility tests / 1,162 assertions; RuboCop clean; Brakeman 0 warnings; bundler-audit no vulnerabilities; crypto/security gates PASS).
 
 ## Release boundary
 
 This work is development-only until fresh-host acceptance and the normal release seal/promotion process are repeated. Do not mutate the promoted 0.1.8 source tree to apply these fixes.
+
+## Cross-version restore helper correction
+
+A follow-up audit found that the first orchestrator revision attempted to call `rebuild-production-env` from the restored `RC-0.1.8` tree. That sealed release correctly does not contain the new 0.1.8.1 hotfix helper.
+
+The corrected design keeps the helper in the hotfix tree and adds:
+
+```text
+--release-root /absolute/restored-release
+```
+
+`rebuild-production-env` now uses the restored release root only for stable database naming and the production database contract. This allows a `0.1.8.1-dev` recovery tool to restore a sealed `0.1.8` bundle without altering the restored source or accidentally deriving the `0.1.8.1` database name.
+
+Validated on the live host with a temporary output file:
+
+```text
+REBUILD_PRODUCTION_ENV=PASS
+release root: RC-0.1.8
+database_name=ruby_envelope_vault_production_v0_1_8
+provider=aws_kms
+placeholder values: absent
+AWS access credentials embedded: no
+```
+
+A repository regression test also uses a stub older release root to guarantee that the helper does not derive the hotfix version's DB name.
+
+### Why a full local restore was not run on the promoted host
+
+The default full recovery path intentionally restores the deterministic stable production DB name. Running it on the same host that is actively serving promoted 0.1.8 would drop/recreate the live stable database and therefore would not be an isolated rehearsal.
+
+The safe same-host boundary is therefore:
+
+- real POSTPROMOTE ciphertext `--inspect-only`;
+- internal manifest/Git/DB-catalog verification;
+- cross-version host-local production-env rebuild into a temporary file;
+- regression/release gates.
+
+The first full end-to-end restore with DB recreation, optional repoint, production start and postpromote evidence must run on a fresh Colab host.

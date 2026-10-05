@@ -141,6 +141,62 @@ class ProductionEnvContractTest < ActiveSupport::TestCase
     end
   end
 
+
+  test "production env rebuild can target an older restored release root" do
+    Dir.mktmpdir do |dir|
+      runtime_env = File.join(dir, "runtime.env")
+      aws_env = File.join(dir, "aws.env")
+      output = File.join(dir, "production.env")
+      release_root = File.join(dir, "restored-release")
+      script_dir = File.join(release_root, "script")
+      FileUtils.mkdir_p(script_dir)
+
+      File.write(runtime_env, <<~ENV)
+        export DATABASE_URL=postgresql://vault_user:host-password@127.0.0.1:5432/dev_db
+        export SECRET_KEY_BASE=#{"b" * 128}
+      ENV
+      File.write(aws_env, <<~ENV)
+        export AWS_ACCESS_KEY_ID=fake-access
+        export AWS_SECRET_ACCESS_KEY=fake-secret
+        export AWS_REGION=ap-southeast-1
+        export AWS_KMS_KEY_ID=22222222-2222-2222-2222-222222222222
+        export AWS_KMS_KEY01_ID=11111111-1111-1111-1111-111111111111
+        export AWS_KMS_KEY02_ID=22222222-2222-2222-2222-222222222222
+      ENV
+      File.write(File.join(script_dir, "production-database-name"), <<~SH)
+        #!/usr/bin/env bash
+        echo ruby_envelope_vault_production_v0_1_8
+      SH
+      File.write(File.join(script_dir, "production-database-contract"), <<~'SH')
+        #!/usr/bin/env bash
+        set -e
+        source "$PRODUCTION_ENV_FILE"
+        case "$DATABASE_URL" in
+          */ruby_envelope_vault_production_v0_1_8) exit 0 ;;
+          *) exit 2 ;;
+        esac
+      SH
+      File.chmod(0o600, runtime_env)
+      File.chmod(0o600, aws_env)
+      File.chmod(0o755, File.join(script_dir, "production-database-name"))
+      File.chmod(0o755, File.join(script_dir, "production-database-contract"))
+
+      stdout, stderr, status = Open3.capture3(
+        Rails.root.join("script/rebuild-production-env").to_s,
+        "--runtime-env", runtime_env,
+        "--aws-secret", aws_env,
+        "--release-root", release_root,
+        "--output", output
+      )
+
+      assert status.success?, stderr
+      assert_includes stdout, "database_name=ruby_envelope_vault_production_v0_1_8"
+      body = File.read(output)
+      assert_includes body, "ruby_envelope_vault_production_v0_1_8"
+      refute_includes body, "ruby_envelope_vault_production_v0_1_8_1"
+    end
+  end
+
   test "bootstrap start self-heals a missing bundle before building assets" do
     script = Rails.root.join("bootstrap.sh").read
     start_case = script.split('case "$COMMAND" in', 2).last

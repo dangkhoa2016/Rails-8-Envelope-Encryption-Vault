@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+HOTFIX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+
 usage() {
   cat >&2 <<'USAGE'
 usage: script/restore-postpromote-full-private \
@@ -152,10 +154,11 @@ echo "POSTPROMOTE_PRIVATE_AUTHORITY_RESTORE=PASS"
 START_SERVER=0 RUN_TESTS=0 ENV_FILE="$rc_dst/.env.kaggle" "$rc_dst/bootstrap.sh" setup >/dev/null
 echo "POSTPROMOTE_BOOTSTRAP=PASS"
 
-"$rc_dst/script/rebuild-production-env" \
+"$HOTFIX_ROOT/script/rebuild-production-env" \
   --runtime-env "$rc_dst/.env.kaggle" \
   --aws-secret "$install_root/ruby-encrypt-env" \
   --base-production-env "$private/production.env" \
+  --release-root "$rc_dst" \
   --output "$runtime_root/production.env" >/dev/null
 echo "POSTPROMOTE_PRODUCTION_ENV_REBUILD=PASS"
 

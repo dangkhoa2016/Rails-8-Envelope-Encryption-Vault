@@ -7,12 +7,14 @@ usage: script/rebuild-production-env \
   --runtime-env /absolute/.env.kaggle \
   --aws-secret /absolute/aws.env \
   [--base-production-env /absolute/old-production.env] \
+  [--release-root /absolute/restored-release] \
   [--output /absolute/production.env]
 USAGE
   exit 64
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+release_root="$ROOT"
 runtime_env=""
 aws_secret=""
 base_env=""
@@ -23,11 +25,21 @@ while [[ $# -gt 0 ]]; do
     --runtime-env) runtime_env="${2:-}"; shift 2 ;;
     --aws-secret) aws_secret="${2:-}"; shift 2 ;;
     --base-production-env) base_env="${2:-}"; shift 2 ;;
+    --release-root) release_root="${2:-}"; shift 2 ;;
     --output) output="${2:-}"; shift 2 ;;
     -h|--help) usage ;;
     *) usage ;;
   esac
 done
+
+[[ "$release_root" == /* && "$release_root" != "/" && -d "$release_root" ]] || {
+  echo "REBUILD_PRODUCTION_ENV=FAIL reason=invalid-release-root" >&2
+  exit 2
+}
+[[ -x "$release_root/script/production-database-name" && -x "$release_root/script/production-database-contract" ]] || {
+  echo "REBUILD_PRODUCTION_ENV=FAIL reason=release-contract-missing" >&2
+  exit 2
+}
 
 for p in "$runtime_env" "$aws_secret"; do
   [[ "$p" == /* && "$p" != "/" && -f "$p" && -r "$p" ]] || {
@@ -50,7 +62,7 @@ base_reauth_on_reveal="false"
 if [[ -n "$base_env" ]]; then
   # shellcheck disable=SC1091
   source "$ROOT/script/lib/production-env.sh"
-  revault_validate_production_env_path "$ROOT" "$base_env" || exit 2
+  revault_validate_production_env_path "$release_root" "$base_env" || exit 2
   set -a
   # shellcheck disable=SC1090
   source "$base_env"
@@ -82,7 +94,7 @@ set -a
 source "$normalized_aws"
 set +a
 
-stable_db="$("$ROOT/script/production-database-name")"
+stable_db="$("$release_root/script/production-database-name")"
 target_database_url="$(python3 - "$runtime_database_url" "$stable_db" <<'PY'
 import sys
 from urllib.parse import urlsplit, urlunsplit
@@ -120,7 +132,7 @@ umask 077
 } > "$output"
 chmod 600 "$output"
 
-PRODUCTION_ENV_FILE="$output" "$ROOT/script/production-database-contract" >/dev/null
+PRODUCTION_ENV_FILE="$output" "$release_root/script/production-database-contract" >/dev/null
 
 echo "REBUILD_PRODUCTION_ENV=PASS output=$output database_name=$stable_db provider=aws_kms"
 echo "REBUILD_PRODUCTION_ENV_CREDENTIALS_EMBEDDED=no"
