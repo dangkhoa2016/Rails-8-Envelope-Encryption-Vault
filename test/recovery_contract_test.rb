@@ -488,6 +488,10 @@ class RecoveryContractTest < ActiveSupport::TestCase
     assert_includes script, '-H "X-Forwarded-For: $global_ip"'
     assert_includes script, "account_email_upper"
     assert_includes script, "GLOBAL_THROTTLE_PRESEED=PASS"
+    assert_includes script, "wait_for_fixed_window 60 8"
+    assert_includes script, "wait_for_fixed_window 600 15"
+    assert_operator script.index("wait_for_fixed_window 60 8"), :<, script.index("for i in $(seq 1 6)")
+    assert_operator script.index("wait_for_fixed_window 600 15"), :<, script.index("for i in $(seq 1 10)")
     assert_includes script, "throttle.limit == 300"
     assert_includes script, "throttle.period == 60"
     assert_includes script, "cache.store.write(key, 299"
@@ -618,16 +622,16 @@ class RecoveryContractTest < ActiveSupport::TestCase
     assert_includes script, "POSTPROMOTE_SOURCE_VERIFY=PASS"
     assert_includes script, 'reconstructed_name="reconstructed-authority-$version"'
     assert_includes script, 'release_secrets_name="release-secrets-$version"'
-    assert_includes script, 'reason=missing-release-secrets'
-    assert_includes script, 'reason=missing-private-authority'
+    assert_includes script, "reason=missing-release-secrets"
+    assert_includes script, "reason=missing-private-authority"
     assert_includes script, '[[ -f "$private/ruby-encrypt-env" ]]'
     assert_includes script, '[[ -f "$private/production.env" ]]'
     assert_operator script.index('[[ -d "$private/$release_secrets_name" ]]'), :<, script.index('cp -a "$rc_src" "$rc_dst"')
     assert_operator script.index('[[ -f "$private/ruby-encrypt-env" ]]'), :<, script.index('cp -a "$rc_src" "$rc_dst"')
     assert_operator script.index('[[ -f "$private/production.env" ]]'), :<, script.index('cp -a "$rc_src" "$rc_dst"')
-    assert_includes script, 'RUBY-ENVELOPE-VAULT-v*-PRIVATE-DR-PROMOTED-*'
-    refute_includes script, 'release-secrets-0.1.8'
-    refute_includes script, 'reconstructed-authority-0.1.8'
+    assert_includes script, "RUBY-ENVELOPE-VAULT-v*-PRIVATE-DR-PROMOTED-*"
+    refute_includes script, "release-secrets-0.1.8"
+    refute_includes script, "reconstructed-authority-0.1.8"
     assert_includes script, '"$HOTFIX_ROOT/script/rebuild-production-env"'
     assert_includes script, '--release-root "$rc_dst"'
     refute_includes script, '"$rc_dst/script/rebuild-production-env"'

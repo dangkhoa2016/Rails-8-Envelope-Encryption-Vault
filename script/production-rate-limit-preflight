@@ -37,11 +37,29 @@ global_ip="192.0.2.$(( $$ % 200 + 1 ))"
 email="FIX45-RateLimit-${run_tag}@Example.Invalid"; password="FIX45_RATE_LIMIT_PASSWORD_CANARY"
 account_email="target-${run_tag}@example.invalid"
 account_email_upper="$(printf '%s' "$account_email" | tr '[:lower:]' '[:upper:]')"
+
+wait_for_fixed_window() {
+  local period="$1"
+  local minimum_remaining="$2"
+  local now remaining
+  now="$(date +%s)"
+  remaining=$(( period - (now % period) ))
+  if (( remaining < minimum_remaining )); then
+    sleep $(( remaining + 1 ))
+  fi
+}
+
+# Rack::Attack uses fixed windows. Avoid straddling the 60-second login/IP
+# bucket, which can otherwise make six rapid requests appear as two buckets.
+wait_for_fixed_window 60 8
 : > "$tmp/statuses"
 for i in $(seq 1 6); do code="$(curl -sS -D "$tmp/login-$i.headers" -o "$tmp/login-$i.body" -w "%{http_code}" -b "$tmp/cookies" -c "$tmp/cookies" -H "Origin: $base" -H "X-Forwarded-For: $login_ip" -H "X-Request-Id: fix45-login-$i" --data-urlencode "email_address=$email" --data-urlencode "password=$password" --data-urlencode "authenticity_token=$token" "$base/session")"; echo "$code" >> "$tmp/statuses"; done
 for i in $(seq 1 8); do curl -sS -o /dev/null -w "%{http_code}\n" "$base/up"; done > "$tmp/up"
 for i in $(seq 1 8); do curl -sS -o /dev/null -w "%{http_code}\n" "$base/ready"; done > "$tmp/ready"
 RAILS_ENV=production bin/rails runner 'Rack::Attack.cache.store.clear' >/dev/null
+# The account throttle is a fixed 10-minute bucket. Keep all eleven requests
+# in one bucket so this release gate tests the limit rather than wall-clock luck.
+wait_for_fixed_window 600 15
 : > "$tmp/account-statuses"
 for i in $(seq 1 10); do
   ip="198.51.100.$i"
