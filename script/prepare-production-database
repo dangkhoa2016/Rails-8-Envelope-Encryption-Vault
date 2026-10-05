@@ -97,6 +97,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
+PRIVATE_DR_RUNTIME_ENV_FILE="$runtime_env" \
 "$ROOT/script/private-dr-restore-acceptance" \
   --archive "$archive" \
   --outer-key "$outer_key" \

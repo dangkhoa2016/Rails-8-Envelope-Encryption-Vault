@@ -24,7 +24,8 @@ class ProductionDatabaseContractTest < ActiveSupport::TestCase
     Dir.mktmpdir do |dir|
       env_file = File.join(dir, "production.env")
       evidence = File.join(dir, "evidence.json")
-      File.write(env_file, "DATABASE_URL=postgresql://user:do-not-print@127.0.0.1:5432/ruby_envelope_vault_production_v0_1_8\n")
+      stable_name = run_name(Rails.root.join("VERSION").read.strip)
+      File.write(env_file, "DATABASE_URL=postgresql://user:do-not-print@127.0.0.1:5432/#{stable_name}\n")
       File.chmod(0o600, env_file)
 
       stdout, stderr, status = Open3.capture3(
@@ -42,7 +43,7 @@ class ProductionDatabaseContractTest < ActiveSupport::TestCase
 
       data = JSON.parse(File.read(evidence))
       assert_equal "pass", data["status"]
-      assert_equal "ruby_envelope_vault_production_v0_1_8", data["database_name"]
+      assert_equal stable_name, data["database_name"]
       assert_equal false, data["database_url_recorded"]
       assert_equal false, data["credential_values_recorded"]
       assert_equal false, data["contains_secret_values"]
@@ -97,6 +98,7 @@ class ProductionDatabaseContractTest < ActiveSupport::TestCase
     assert_includes script, "--replace"
     assert_includes script, 'dropdb" -h "$pg_socket"'
     assert_includes script, 'prepared" == "1" && "$complete" != "1"'
+    assert_includes script, 'PRIVATE_DR_RUNTIME_ENV_FILE="$runtime_env"'
   end
 
   test "release promotion preparation is verification only for current symlink" do

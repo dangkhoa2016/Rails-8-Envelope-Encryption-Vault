@@ -609,4 +609,20 @@ class RecoveryContractTest < ActiveSupport::TestCase
       assert_includes script, 'require "bundler/setup"'
     end
   end
+
+  test "postpromote full private restore orchestrator is explicit and non-promoting by default" do
+    script = Rails.root.join("script/restore-postpromote-full-private").read
+
+    assert_includes script, "POSTPROMOTE_INTERNAL_MANIFEST=PASS"
+    assert_includes script, "POSTPROMOTE_BUNDLE_METADATA=PASS"
+    assert_includes script, "POSTPROMOTE_SOURCE_AND_DB_VERIFY=PASS"
+    assert_includes script, "script/rebuild-production-env"
+    assert_includes script, 'bootstrap.sh" setup'
+    assert_includes script, "POSTPROMOTE_DATABASE_RESTORE=PASS"
+    assert_includes script, "--repoint-current"
+    assert_includes script, "--start-production"
+    assert_includes script, 'if [[ "$repoint" == "1" ]]'
+    assert_includes script, 'if [[ "$start_production" == "1" ]]'
+    assert_includes script, "start-requires-repoint"
+  end
 end

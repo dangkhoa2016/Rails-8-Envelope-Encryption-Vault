@@ -913,6 +913,9 @@ case "$COMMAND" in
     start_redis
     write_env_file
     write_activation_helper
+    if ! BUNDLE_PATH="$BUNDLE_DIR" bundle check >/dev/null 2>&1; then
+      install_bundle
+    fi
     build_web_assets
     emit_recovery_summary
     if [[ "$START_SERVER" == "1" ]]; then
