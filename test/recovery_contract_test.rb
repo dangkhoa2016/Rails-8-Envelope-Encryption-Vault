@@ -616,10 +616,24 @@ class RecoveryContractTest < ActiveSupport::TestCase
     assert_includes script, "POSTPROMOTE_INTERNAL_MANIFEST=PASS"
     assert_includes script, "POSTPROMOTE_BUNDLE_METADATA=PASS"
     assert_includes script, "POSTPROMOTE_SOURCE_VERIFY=PASS"
+    assert_includes script, 'reconstructed_name="reconstructed-authority-$version"'
+    assert_includes script, 'release_secrets_name="release-secrets-$version"'
+    assert_includes script, 'reason=missing-release-secrets'
+    assert_includes script, 'reason=missing-private-authority'
+    assert_includes script, '[[ -f "$private/ruby-encrypt-env" ]]'
+    assert_includes script, '[[ -f "$private/production.env" ]]'
+    assert_operator script.index('[[ -d "$private/$release_secrets_name" ]]'), :<, script.index('cp -a "$rc_src" "$rc_dst"')
+    assert_operator script.index('[[ -f "$private/ruby-encrypt-env" ]]'), :<, script.index('cp -a "$rc_src" "$rc_dst"')
+    assert_operator script.index('[[ -f "$private/production.env" ]]'), :<, script.index('cp -a "$rc_src" "$rc_dst"')
+    assert_includes script, 'RUBY-ENVELOPE-VAULT-v*-PRIVATE-DR-PROMOTED-*'
+    refute_includes script, 'release-secrets-0.1.8'
+    refute_includes script, 'reconstructed-authority-0.1.8'
     assert_includes script, '"$HOTFIX_ROOT/script/rebuild-production-env"'
     assert_includes script, '--release-root "$rc_dst"'
     refute_includes script, '"$rc_dst/script/rebuild-production-env"'
     assert_includes script, 'bootstrap.sh" setup'
+    assert_includes script, 'export RUNTIME_ROOT="$runtime_root"'
+    assert_operator script.index('export RUNTIME_ROOT="$runtime_root"'), :<, script.index('bootstrap.sh" setup')
     assert_includes script, "POSTPROMOTE_DATABASE_CATALOG=PASS"
     assert_includes script, "reason=pg_restore-missing"
     assert_includes script, 'sha256sum "$dump" > "$dump.sha256"'

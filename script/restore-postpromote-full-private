@@ -98,6 +98,8 @@ PY
 version="${meta_fields[0]}"
 offhost="${meta_fields[1]}"
 [[ -n "$version" ]] || { echo "POSTPROMOTE_RESTORE=FAIL reason=missing-release-version" >&2; exit 2; }
+reconstructed_name="reconstructed-authority-$version"
+release_secrets_name="release-secrets-$version"
 echo "POSTPROMOTE_BUNDLE_METADATA=PASS version=$version offhost_roundtrip=$offhost"
 
 rc_src="$(find "$bundle/source" -mindepth 1 -maxdepth 1 -type d -name 'RC-*' -print -quit)"
@@ -130,6 +132,20 @@ rc_name="$(basename "$rc_src")"
 dev_name="$(basename "$dev_src")"
 rc_dst="$install_root/$rc_name"
 dev_dst="$install_root/$dev_name"
+
+[[ -d "$private/$release_secrets_name" ]] || {
+  echo "POSTPROMOTE_RESTORE=FAIL reason=missing-release-secrets path=$private/$release_secrets_name" >&2
+  exit 2
+}
+[[ -f "$private/ruby-encrypt-env" ]] || {
+  echo "POSTPROMOTE_RESTORE=FAIL reason=missing-private-authority path=$private/ruby-encrypt-env" >&2
+  exit 2
+}
+[[ -f "$private/production.env" ]] || {
+  echo "POSTPROMOTE_RESTORE=FAIL reason=missing-private-authority path=$private/production.env" >&2
+  exit 2
+}
+
 for dst in "$rc_dst" "$dev_dst"; do
   if [[ -e "$dst" && "$replace_source" != "1" ]]; then
     echo "POSTPROMOTE_RESTORE=FAIL reason=source-exists path=$dst" >&2
@@ -145,16 +161,17 @@ cp -a "$dev_src" "$dev_dst"
 mkdir -p "$rc_dst/tmp/release-artifacts" "$rc_dst/tmp/release-history"
 cp -a "$bundle/release-artifacts/." "$rc_dst/tmp/release-artifacts/"
 [[ -d "$bundle/release-history" ]] && cp -a "$bundle/release-history/." "$rc_dst/tmp/release-history/"
-[[ -d "$bundle/evidence/reconstructed-authority-0.1.8" ]] && cp -a "$bundle/evidence/reconstructed-authority-0.1.8" "$install_root/reconstructed-authority-0.1.8"
+[[ -d "$bundle/evidence/$reconstructed_name" ]] && cp -a "$bundle/evidence/$reconstructed_name" "$install_root/$reconstructed_name"
 echo "POSTPROMOTE_SOURCE_RESTORE=PASS"
 
 runtime_root="$install_root/.ruby-envelope-vault-runtime"
-mkdir -p "$runtime_root" "$install_root/release-secrets-0.1.8"
-chmod 700 "$runtime_root" "$install_root/release-secrets-0.1.8"
+export RUNTIME_ROOT="$runtime_root"
+mkdir -p "$runtime_root" "$install_root/$release_secrets_name"
+chmod 700 "$runtime_root" "$install_root/$release_secrets_name"
 install -m 600 "$private/ruby-encrypt-env" "$install_root/ruby-encrypt-env"
-cp -a "$private/release-secrets-0.1.8/." "$install_root/release-secrets-0.1.8/"
-chmod -R go-rwx "$install_root/release-secrets-0.1.8"
-for f in "$private"/RUBY-ENVELOPE-VAULT-v0.1.6.1-PRIVATE-DR-PROMOTED-*; do
+cp -a "$private/$release_secrets_name/." "$install_root/$release_secrets_name/"
+chmod -R go-rwx "$install_root/$release_secrets_name"
+for f in "$private"/RUBY-ENVELOPE-VAULT-v*-PRIVATE-DR-PROMOTED-*; do
   [[ -f "$f" ]] && install -m 600 "$f" "$install_root/$(basename "$f")"
 done
 echo "POSTPROMOTE_PRIVATE_AUTHORITY_RESTORE=PASS"
