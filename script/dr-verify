@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+backup="${1:?usage: TARGET_DATABASE_URL=... USER_EMAIL=... ITEM_ID=... [EXPECTED_CANARY_FIELD=... EXPECTED_CANARY_VALUE=...] script/dr-verify PATH.dump}"
+: "${TARGET_DATABASE_URL:?TARGET_DATABASE_URL is required}"
+: "${USER_EMAIL:?USER_EMAIL is required}"
+: "${ITEM_ID:?ITEM_ID is required}"
+script/restore-db "$backup"
+DATABASE_URL="$TARGET_DATABASE_URL" USER_EMAIL="$USER_EMAIL" ITEM_ID="$ITEM_ID" \
+EXPECTED_CANARY_FIELD="${EXPECTED_CANARY_FIELD:-}" EXPECTED_CANARY_VALUE="${EXPECTED_CANARY_VALUE:-}" bin/rails runner '
+  user = User.find_by!(email_address: ENV.fetch("USER_EMAIL").downcase)
+  item = user.vault_items.find(ENV.fetch("ITEM_ID"))
+  payload = Vault::RevealItem.call(user: user, item: item, audit: false)
+  raise "DR decrypt failed" unless payload.is_a?(Hash) && payload["schema"].present?
+
+  field = ENV["EXPECTED_CANARY_FIELD"].to_s
+  expected = ENV["EXPECTED_CANARY_VALUE"].to_s
+  if field.present? || expected.present?
+    raise "Both EXPECTED_CANARY_FIELD and EXPECTED_CANARY_VALUE are required" if field.blank? || expected.blank?
+    raise "DR canary mismatch for #{field}" unless payload[field] == expected
+  end
+
+  puts "PASS DR restore+decrypt item=#{item.id} schema=#{payload["schema"]}"
+  puts "PASS DR canary field=#{field}" if field.present?
+'
