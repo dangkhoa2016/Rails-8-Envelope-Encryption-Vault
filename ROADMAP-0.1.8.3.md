@@ -30,7 +30,7 @@ Acceptance must prove remote upload/download, wrapped fresh-key recovery, archiv
 
 ## Milestone 4 — Manual accessibility acceptance
 
-Status: pending.
+Status: AUTOMATED PREFLIGHT PASS / MANUAL PENDING.
 
 Automated accessibility evidence does not constitute a WCAG conformance claim.
 
