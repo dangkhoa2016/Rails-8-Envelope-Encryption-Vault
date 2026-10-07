@@ -24,7 +24,7 @@ Canonical builder must assemble DEV/RC/rollback/private authority/release eviden
 
 ## Milestone 3 — Canonical offsite recovery-chain acceptance
 
-Status: RECONSTRUCTION PENDING.
+Status: PASS (reconstructed-equivalent after host restart).
 
 Acceptance must prove remote upload/download, wrapped fresh-key recovery, archive decrypt, internal manifest, Git integrity, DB catalog and promoted metadata.
 
