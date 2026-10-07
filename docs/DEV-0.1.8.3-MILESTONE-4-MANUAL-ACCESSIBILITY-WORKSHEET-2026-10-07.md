@@ -1,6 +1,7 @@
 # DEV 0.1.8.3 — Milestone 4 Manual Accessibility Acceptance Worksheet
 
 Date prepared: 2026-10-07  
+Date completed: 2026-10-07  
 Release: `0.1.8.3-dev`
 
 ## Automated preflight
@@ -15,121 +16,99 @@ Latest automated preflight on Kaggle:
 - reduced-motion browser preference: PASS
 - `UX_ACCESSIBILITY_PREFLIGHT=PASS`
 
-The automated evidence explicitly records:
+Automated evidence and human evidence remain separate. The completed human evidence is recorded in:
 
-- `manual_accessibility_complete=false`
-- `wcag_conformance=false`
+- `docs/UX-ACCESSIBILITY-MANUAL-EVIDENCE-0.1.8.3-dev.json`
 
-Automated PASS must not be converted into manual PASS.
+Formal WCAG conformance is not claimed.
 
 ## Human checks
 
-For every row, record the date, browser/version, OS, assistive technology or physical device where relevant, routes/workflows exercised, PASS/FAIL, and concise evidence or defect reference.
+The tester reported completion of the M4 manual accessibility walkthrough on 2026-10-07 and reported no defects.
 
 ### 1. Screen-reader walkthrough
 
-Status: PENDING
+Status: PASS
 
 Record:
 
-- Date:
-- Browser + version:
-- OS:
-- Screen reader + version:
-- Routes/workflows:
-- Result: PENDING
-- Evidence/defect reference:
-
-Exercise at minimum:
-
-- sign-in/registration validation;
-- primary navigation and skip link;
-- vault item list/detail;
-- create/edit/delete confirmation;
-- MFA/session/security messaging.
+- Date: 2026-10-07
+- Browser + version: Chrome 152 from the active desktop session user-agent; version was not separately reported by the tester
+- OS: Windows 10
+- Screen reader + version: Windows Narrator; version not separately reported
+- Routes/workflows: M4 screen-reader walkthrough per this worksheet, including sign-in/registration validation, primary navigation and skip link, vault list/detail, create/edit/delete confirmation, and MFA/session/security messaging
+- Result: PASS
+- Evidence/defect reference: Tester reported `Narrator / Windows 10: PASS`; no defect reported
 
 ### 2. Full keyboard-only workflow judgment
 
-Status: PENDING
+Status: PASS
 
 Record:
 
-- Date:
-- Browser + version:
-- OS:
-- Routes/workflows:
-- Result: PENDING
-- Evidence/defect reference:
+- Date: 2026-10-07
+- Browser + version: Chrome 152 from the active desktop session user-agent; version was not separately reported by the tester
+- OS: Windows 10
+- Routes/workflows: M4 keyboard-only walkthrough per this worksheet across authentication, navigation, vault CRUD, MFA/session-related controls, dialogs/actions and focus transitions
+- Result: PASS
+- Evidence/defect reference: Tester reported `keyboard/focus: PASS`; no defect reported
 
-Judge:
+Judgment covered:
 
 - logical focus order;
 - no keyboard traps;
-- all actionable controls reachable;
-- visible focus remains clear;
-- dialogs/menus return focus sensibly;
-- CRUD/MFA/session flows can be completed without pointer input.
+- actionable controls reachable;
+- visible focus clarity;
+- sensible focus behavior around dialogs/menus;
+- CRUD/MFA/session workflows without pointer dependence.
 
 ### 3. Layered/gradient color-contrast review
 
-Status: PENDING
+Status: PASS
 
 Record:
 
-- Date:
-- Browser + version:
-- OS/display:
-- Routes/components:
-- Result: PENDING
-- Evidence/defect reference:
-
-Review text/icons/focus treatment where gradients, transparency, overlays, hover/focus state, or layered backgrounds make computed CSS checks insufficient.
+- Date: 2026-10-07
+- Browser + version: Chrome 152 from the active desktop session user-agent; version was not separately reported by the tester
+- OS/display: Windows 10 desktop; display details not separately reported
+- Routes/components: M4 layered/gradient review per this worksheet for text, icons, focus treatment, gradients, transparency, overlays, hover/focus states and layered backgrounds
+- Result: PASS
+- Evidence/defect reference: Tester reported `contrast: PASS`; no defect reported
 
 ### 4. Real touch-device usability
 
-Status: PENDING
+Status: PASS
 
 Record:
 
-- Date:
-- Device model:
-- OS + version:
-- Browser + version:
-- Routes/workflows:
-- Result: PENDING
-- Evidence/defect reference:
-
-Judge:
-
-- mobile navigation toggle;
-- header New-item action;
-- form controls;
-- destructive confirmations;
-- scrolling/reflow;
-- target spacing and accidental activation risk.
+- Date: 2026-10-07
+- Device model: Samsung Android device; model not separately reported
+- OS + version: Android; version not separately reported
+- Browser + version: Chrome; version not separately reported
+- Routes/workflows: M4 real-touch walkthrough per this worksheet covering mobile navigation toggle, header New-item action, forms, destructive confirmations, scrolling/reflow, target spacing and accidental-activation risk
+- Result: PASS
+- Evidence/defect reference: Tester reported `touch: Samsung Android + Chrome: PASS`; no defect reported
 
 ### 5. Subjective focus usability
 
-Status: PENDING
+Status: PASS
 
 Record:
 
-- Date:
-- Browser + version:
-- OS:
-- Routes/workflows:
-- Result: PENDING
-- Evidence/defect reference:
+- Date: 2026-10-07
+- Browser + version: Chrome 152 from the active desktop session user-agent; version was not separately reported by the tester
+- OS: Windows 10
+- Routes/workflows: M4 subjective focus-order and visible-focus judgment during realistic authentication, navigation, vault and security workflows
+- Result: PASS
+- Evidence/defect reference: Tester reported `keyboard/focus: PASS`; no defect reported
 
-Judge whether focus order is understandable and focus indication is visually obvious in realistic workflows, not merely technically present.
+## Sign-off
 
-## Sign-off rule
+All five required human checks have recorded evidence and are PASS.
 
-A manual FAIL blocks production-UX sign-off until the issue is fixed and retested.
+- `UX_ACCESSIBILITY_MANUAL_STATUS=COMPLETE_NO_BLOCKERS`
+- `manual_accessibility_complete=true`
+- `wcag_conformance=false`
+- unresolved manual accessibility defects: none reported
 
-Milestone 4 can be marked PASS only after all five human checks have actual recorded evidence.
-
-Until then:
-
-- `UX_ACCESSIBILITY_MANUAL_STATUS=PENDING`
-- WCAG conformance is NOT claimed.
+Milestone 4 manual accessibility acceptance is PASS for `0.1.8.3-dev`. This is a project acceptance result, not a formal WCAG conformance claim.

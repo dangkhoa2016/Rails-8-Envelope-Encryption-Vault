@@ -348,14 +348,19 @@ class RecoveryContractTest < ActiveSupport::TestCase
 
   test "FIX40 UX accessibility preflight preserves automated versus human evidence boundary" do
     script = Rails.root.join("script/production-ux-accessibility-preflight").read
+    release_metadata = Rails.root.join("script/release-metadata").read
     doc = Rails.root.join("docs/PRODUCTION-UX-ACCESSIBILITY-ACCEPTANCE-FIX40.md").read
     matrix = Rails.root.join("docs/ACCESSIBILITY-MANUAL-EVIDENCE-FIX40.md").read
 
     assert_includes script, "UX_ACCESSIBILITY_PREFLIGHT=PASS"
-    assert_includes script, "UX_ACCESSIBILITY_MANUAL_STATUS=PENDING"
+    assert_includes script, "UX_ACCESSIBILITY_MANUAL_STATUS=$manual_status"
+    assert_includes script, "UX-ACCESSIBILITY-MANUAL-EVIDENCE-$VERSION.json"
     assert_includes script, '"wcag_conformance": False'
-    assert_includes script, '"manual_accessibility_complete": False'
+    assert_includes script, "manual_accessibility_complete"
+    assert_includes script, "complete_no_blockers"
     assert_includes script, "production_ux_accessibility_test.rb"
+    assert_includes release_metadata, '"complete_no_blockers"'
+    assert_includes release_metadata, "manual accessibility status mismatch"
     assert_includes doc, "does not claim formal WCAG conformance"
     assert_includes matrix, "PENDING HUMAN"
   end

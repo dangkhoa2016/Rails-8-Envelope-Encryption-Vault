@@ -7,7 +7,7 @@ PHASE="${RELEASE_PHASE:-prepromote}"
 VERIFY="${RELEASE_VERIFY_STATUS:-pass}"
 RESTORE="${ISOLATED_RESTORE_STATUS:-pass}"
 OFFHOST="${OFFHOST_ROUNDTRIP_STATUS:-pending}"
-MANUAL_ACCESSIBILITY_STATUS="${MANUAL_ACCESSIBILITY_STATUS:-pending}"
+MANUAL_ACCESSIBILITY_STATUS="${MANUAL_ACCESSIBILITY_STATUS:-auto}"
 INTEGRITY="${PUBLIC_PACKAGE_INTEGRITY_FILE:-$ARTIFACT_DIR/PUBLIC-PACKAGE-INTEGRITY.json}"
 SEALED_SOURCE_MANIFEST="${SEALED_SOURCE_MANIFEST_FILE:-$ARTIFACT_DIR/SEALED-SOURCE-SHA256SUMS.txt}"
 NEW_HOST_RECOVERY="${NEW_HOST_RECOVERY_FILE:-$ARTIFACT_DIR/NEW-HOST-RECOVERY-SUMMARY.json}"
@@ -33,7 +33,7 @@ from pathlib import Path
 art_dir=Path(sys.argv[1]); out=Path(sys.argv[2])
 version, phase, verify, restore, offhost=sys.argv[3:8]
 manual_accessibility_status=os.environ.get("MANUAL_ACCESSIBILITY_STATUS", "pending")
-if manual_accessibility_status not in ("pending", "complete_no_blockers"):
+if manual_accessibility_status not in ("auto", "pending", "complete_no_blockers"):
     raise SystemExit(f"invalid manual accessibility status: {manual_accessibility_status}")
 integrity_path=Path(sys.argv[8])
 sealed_source_manifest=Path(sys.argv[9])
@@ -93,8 +93,28 @@ if ux.get("automated_status") != "pass":
     raise SystemExit("UX/accessibility automated preflight is not pass")
 if ux.get("claims", {}).get("wcag_conformance") is not False:
     raise SystemExit("UX/accessibility evidence must not claim WCAG conformance")
-if ux.get("claims", {}).get("manual_accessibility_complete") is not False:
-    raise SystemExit("manual accessibility must remain explicitly incomplete")
+manual_complete=ux.get("claims", {}).get("manual_accessibility_complete")
+if manual_complete not in (True, False):
+    raise SystemExit("manual accessibility completion claim must be boolean")
+expected_manual_status="complete_no_blockers" if manual_complete else "pending"
+if manual_accessibility_status == "auto":
+    manual_accessibility_status=expected_manual_status
+elif manual_accessibility_status != expected_manual_status:
+    raise SystemExit(
+        f"manual accessibility status mismatch: {manual_accessibility_status} != {expected_manual_status}"
+    )
+if manual_complete:
+    required_human_checks=(
+        "screen_reader_walkthrough",
+        "full_keyboard_workflow_judgment",
+        "layered_color_contrast_review",
+        "real_touch_device_usability",
+        "subjective_focus_usability",
+    )
+    checks=ux.get("human_checks", {})
+    for key in required_human_checks:
+        if checks.get(key) != "pass":
+            raise SystemExit(f"manual accessibility check is not pass: {key}")
 ux_sha=hashlib.sha256(ux_preflight.read_bytes()).hexdigest()
 if not http_preflight.is_file(): raise SystemExit(f"missing HTTP security preflight evidence: {http_preflight}")
 http=json.loads(http_preflight.read_text())

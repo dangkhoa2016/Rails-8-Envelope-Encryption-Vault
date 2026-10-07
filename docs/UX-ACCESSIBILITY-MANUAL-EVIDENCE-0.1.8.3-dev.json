@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "release_version": "0.1.8.3-dev",
+  "recorded_at": "2026-10-07",
+  "status": "complete_no_blockers",
+  "source": "human manual accessibility acceptance reported by tester during DEV 0.1.8.3 M4",
+  "human_checks": {
+    "screen_reader_walkthrough": {
+      "status": "pass",
+      "date": "2026-10-07",
+      "browser": "Chrome 152 (session user-agent; tester did not separately report browser version)",
+      "os": "Windows 10",
+      "assistive_technology": "Windows Narrator (version not separately reported)",
+      "workflows": "M4 screen-reader walkthrough per worksheet checklist, including authentication/validation, primary navigation, vault workflows, confirmations, and security messaging.",
+      "evidence": "Tester reported Narrator / Windows 10: PASS; no defect reported."
+    },
+    "full_keyboard_workflow_judgment": {
+      "status": "pass",
+      "date": "2026-10-07",
+      "browser": "Chrome 152 (session user-agent; tester did not separately report browser version)",
+      "os": "Windows 10",
+      "workflows": "M4 keyboard-only walkthrough per worksheet checklist across authentication, navigation, vault CRUD, MFA/session-related controls and focus transitions.",
+      "evidence": "Tester reported keyboard/focus: PASS; no defect reported."
+    },
+    "layered_color_contrast_review": {
+      "status": "pass",
+      "date": "2026-10-07",
+      "browser": "Chrome 152 (session user-agent; tester did not separately report browser version)",
+      "os_display": "Windows 10 desktop; display details not separately reported",
+      "workflows": "M4 layered/gradient contrast review per worksheet checklist for text, icons, focus treatment, overlays, transparency, hover and focus states.",
+      "evidence": "Tester reported contrast: PASS; no defect reported."
+    },
+    "real_touch_device_usability": {
+      "status": "pass",
+      "date": "2026-10-07",
+      "device": "Samsung Android device (model not separately reported)",
+      "os": "Android (version not separately reported)",
+      "browser": "Chrome (version not separately reported)",
+      "workflows": "M4 real-touch walkthrough per worksheet checklist covering mobile navigation, primary actions, forms, confirmations, scrolling/reflow and target spacing.",
+      "evidence": "Tester reported Samsung Android + Chrome: PASS; no defect reported."
+    },
+    "subjective_focus_usability": {
+      "status": "pass",
+      "date": "2026-10-07",
+      "browser": "Chrome 152 (session user-agent; tester did not separately report browser version)",
+      "os": "Windows 10",
+      "workflows": "M4 subjective focus-order and focus-visibility judgment during realistic authentication, navigation and vault/security workflows.",
+      "evidence": "Tester reported keyboard/focus: PASS; no defect reported."
+    }
+  },
+  "claims": {
+    "manual_accessibility_complete": true,
+    "wcag_conformance": false
+  },
+  "defects": []
+}
