@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+if [[ -n "${REV_SECRETS_ROOT:-}" ]]; then
+  SECRETS_ROOT="$REV_SECRETS_ROOT"
+elif [[ -d /kaggle/working/ruby-envelope-vault-persistent/secrets ]]; then
+  SECRETS_ROOT=/kaggle/working/ruby-envelope-vault-persistent/secrets
+elif [[ -d "$ROOT/../ruby-envelope-vault-secrets" ]]; then
+  SECRETS_ROOT="$ROOT/../ruby-envelope-vault-secrets"
+else
+  echo "ERROR: set REV_SECRETS_ROOT to the recovery secrets directory" >&2
+  exit 1
+fi
+OUT_DIR="${REV_ARTIFACT_DIR:-$ROOT/tmp/release-artifacts}"
+VERSION="$(tr -d '\r\n' < "$ROOT/VERSION")"
+mkdir -p "$OUT_DIR"
+exec "$ROOT/script/build-migration-bundle" \
+  "$ROOT" \
+  "$SECRETS_ROOT/source-env.kaggle" \
+  "$SECRETS_ROOT/rclone.conf" \
+  "$SECRETS_ROOT/recovery.agekey" \
+  "$SECRETS_ROOT/keks/kek-kaggle-01.key" \
+  "$OUT_DIR/ruby-envelope-vault-v${VERSION}-MIGRATION-BUNDLE.tar.gz"

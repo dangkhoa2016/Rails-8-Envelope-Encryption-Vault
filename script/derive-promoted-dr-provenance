@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: script/derive-promoted-dr-provenance \
+  --archive /absolute/private-dr.tar.gz.age \
+  --archive-sha-file /absolute/private-dr.tar.gz.age.sha256 \
+  --source-metadata /absolute/RELEASE-METADATA.json \
+  --source-acceptance /absolute/PRIVATE-DR-RESTORE-ACCEPTANCE.json \
+  --source-migrations /absolute/source/db/migrate \
+  --target-migrations /absolute/target/db/migrate \
+  --output /absolute/provenance.json
+EOF
+  exit 64
+}
+
+archive=""
+archive_sha_file=""
+source_metadata=""
+source_acceptance=""
+source_migrations=""
+target_migrations=""
+output=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --archive) archive="${2:-}"; shift 2 ;;
+    --archive-sha-file) archive_sha_file="${2:-}"; shift 2 ;;
+    --source-metadata) source_metadata="${2:-}"; shift 2 ;;
+    --source-acceptance) source_acceptance="${2:-}"; shift 2 ;;
+    --source-migrations) source_migrations="${2:-}"; shift 2 ;;
+    --target-migrations) target_migrations="${2:-}"; shift 2 ;;
+    --output) output="${2:-}"; shift 2 ;;
+    -h|--help) usage ;;
+    *) usage ;;
+  esac
+done
+
+for p in "$archive" "$archive_sha_file" "$source_metadata" "$source_acceptance" "$source_migrations" "$target_migrations" "$output"; do
+  [[ "$p" == /* && "$p" != "/" ]] || {
+    echo "DERIVE_PROMOTED_DR_PROVENANCE=FAIL reason=absolute-path-required" >&2
+    exit 2
+  }
+done
+
+for p in "$archive" "$archive_sha_file" "$source_metadata" "$source_acceptance"; do
+  [[ -f "$p" && -r "$p" ]] || {
+    echo "DERIVE_PROMOTED_DR_PROVENANCE=FAIL reason=missing-file-input" >&2
+    exit 2
+  }
+done
+
+for p in "$source_migrations" "$target_migrations"; do
+  [[ -d "$p" && -r "$p" ]] || {
+    echo "DERIVE_PROMOTED_DR_PROVENANCE=FAIL reason=missing-migration-directory" >&2
+    exit 2
+  }
+done
+
+mkdir -p "$(dirname "$output")"
+
+python3 - "$archive" "$archive_sha_file" "$source_metadata" "$source_acceptance" "$source_migrations" "$target_migrations" "$output" <<'PY'
+import hashlib
+import json
+import re
+import sys
+from pathlib import Path
+
+archive = Path(sys.argv[1])
+archive_sha_file = Path(sys.argv[2])
+metadata_path = Path(sys.argv[3])
+acceptance_path = Path(sys.argv[4])
+source_migrations = Path(sys.argv[5])
+target_migrations = Path(sys.argv[6])
+output = Path(sys.argv[7])
+
+def fail(reason):
+    raise SystemExit(f"DERIVE_PROMOTED_DR_PROVENANCE=FAIL reason={reason}")
+
+def load_json(path, label):
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        fail(f"invalid-{label}-json")
+    if not isinstance(data, dict):
+        fail(f"invalid-{label}-document")
+    return data
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+def migration_map(root):
+    rows = {}
+    for p in sorted(root.rglob("*")):
+        if p.is_file():
+            rel = p.relative_to(root).as_posix()
+            rows[rel] = sha256_file(p)
+    return rows
+
+metadata = load_json(metadata_path, "metadata")
+acceptance = load_json(acceptance_path, "acceptance")
+
+if metadata.get("schema_version") != 1:
+    fail("unsupported-metadata-schema")
+if metadata.get("phase") != "promoted":
+    fail("source-release-not-promoted")
+if metadata.get("promotion_performed") is not True:
+    fail("source-promotion-not-confirmed")
+if metadata.get("release_verify") != "pass":
+    fail("source-release-verify-not-pass")
+if metadata.get("private_dr_restore_acceptance") != "pass":
+    fail("source-private-dr-acceptance-not-pass")
+
+source_release = metadata.get("release_version")
+if not isinstance(source_release, str) or not source_release:
+    fail("missing-source-release-version")
+
+acceptance_sha = sha256_file(acceptance_path)
+if metadata.get("private_dr_acceptance_sha256") != acceptance_sha:
+    fail("source-acceptance-sha256-mismatch")
+
+archive_name = archive.name
+if acceptance.get("artifact") != archive_name:
+    fail("acceptance-artifact-mismatch")
+for key in ("outer_decrypt", "database_restore", "historical_decrypt"):
+    if acceptance.get(key) != "pass":
+        fail(f"acceptance-{key.replace('_', '-')}-not-pass")
+if acceptance.get("http_up") != 200 or acceptance.get("http_ready") != 200:
+    fail("acceptance-http-readiness-not-pass")
+
+for key in ("credential_values_recorded", "key_ids_recorded", "plaintext_recorded"):
+    if acceptance.get(key) is not False:
+        fail(f"acceptance-sensitive-data-contract-{key}")
+
+counts = acceptance.get("database_counts")
+if not isinstance(counts, dict):
+    fail("missing-database-counts")
+if metadata.get("private_dr_database_counts") != counts:
+    fail("metadata-acceptance-database-counts-mismatch")
+
+archive_sha = sha256_file(archive)
+sidecar_line = archive_sha_file.read_text(encoding="utf-8").strip().splitlines()
+if len(sidecar_line) != 1:
+    fail("invalid-archive-sha-file")
+match = re.fullmatch(r"([0-9a-fA-F]{64})\s+(.+)", sidecar_line[0].strip())
+if not match:
+    fail("invalid-archive-sha-file")
+sidecar_sha = match.group(1).lower()
+sidecar_name = Path(match.group(2).lstrip("*")).name
+if sidecar_name != archive_name:
+    fail("archive-sha-file-artifact-mismatch")
+if sidecar_sha != archive_sha:
+    fail("archive-sha256-mismatch")
+
+source_map = migration_map(source_migrations)
+target_map = migration_map(target_migrations)
+if not source_map or not target_map:
+    fail("empty-migration-set")
+if source_map != target_map:
+    fail("migration-set-not-identical")
+
+target_version_path = target_migrations.parent.parent / "VERSION"
+if not target_version_path.is_file():
+    fail("missing-target-version")
+target_release = target_version_path.read_text(encoding="utf-8").strip()
+if not target_release:
+    fail("missing-target-release-version")
+
+provenance = {
+    "schema_version": 1,
+    "status": "pass",
+    "snapshot_role": "production-authority",
+    "source_type": "promoted-private-dr",
+    "source_release_version": source_release,
+    "target_release_version": target_release,
+    "artifact": archive_name,
+    "artifact_sha256": archive_sha,
+    "production_authority_confirmed": True,
+    "source_equals_runtime_database": False,
+    "migration_set_identical": True,
+    "migration_file_count": len(source_map),
+    "database_counts": counts,
+    "contains_secret_values": False,
+    "credential_values_recorded": False,
+    "key_ids_recorded": False,
+    "plaintext_recorded": False,
+}
+
+output.write_text(json.dumps(provenance, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+output.chmod(0o644)
+print("DERIVE_PROMOTED_DR_PROVENANCE=PASS")
+print(f"MIGRATION_SET_IDENTICAL=PASS files={len(source_map)}")
+print(f"PROVENANCE_OUTPUT={output}")
+PY
