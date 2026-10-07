@@ -9,6 +9,8 @@ class ReleasePromotionDryRunTest < ActiveSupport::TestCase
 
     assert_includes script, "release-seal-prepromote"
     assert_includes script, "RELEASE_REQUIRE_LIVE_AWS_KMS=1"
+    assert_includes script, 'export PRIVATE_DR_RUNTIME_ENV_FILE="${PRIVATE_DR_RUNTIME_ENV_FILE:-$ROOT/.env.kaggle}"'
+    assert_operator script.index('export PRIVATE_DR_RUNTIME_ENV_FILE="${PRIVATE_DR_RUNTIME_ENV_FILE:-$ROOT/.env.kaggle}"'), :<, script.index("release-seal-prepromote")
     assert_includes script, "release-prepare-promotion"
     assert_includes script, "production-database-name"
     assert_includes script, "stable-database-preexists"

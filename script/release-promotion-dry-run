@@ -109,6 +109,7 @@ export ENV_FILE=/dev/null
 source "$ROOT/activate-runtime.sh" >/dev/null
 # shellcheck disable=SC1091
 source "$ROOT/.env.kaggle"
+export PRIVATE_DR_RUNTIME_ENV_FILE="${PRIVATE_DR_RUNTIME_ENV_FILE:-$ROOT/.env.kaggle}"
 
 stable_db="$("$ROOT/script/production-database-name")"
 pg_bindir="$(pg_config --bindir)"
