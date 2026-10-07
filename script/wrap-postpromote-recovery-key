@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: script/wrap-postpromote-recovery-key \
+  --fresh-key /absolute/FRESH-OUTER-RECOVERY.agekey \
+  --baseline-recipient-file /absolute/PUBLIC-RECIPIENT.txt \
+  --archive /absolute/FULL-PRIVATE.tar.gz.age \
+  --output-dir /absolute/output-dir
+USAGE
+  exit 64
+}
+
+fresh_key=""
+recipient_file=""
+archive=""
+output_dir=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --fresh-key) fresh_key="${2:-}"; shift 2 ;;
+    --baseline-recipient-file) recipient_file="${2:-}"; shift 2 ;;
+    --archive) archive="${2:-}"; shift 2 ;;
+    --output-dir) output_dir="${2:-}"; shift 2 ;;
+    -h|--help) usage ;;
+    *) usage ;;
+  esac
+done
+
+for p in "$fresh_key" "$recipient_file" "$archive"; do
+  [[ "$p" == /* && "$p" != "/" && -f "$p" && -r "$p" ]] || {
+    echo "RECOVERY_KEY_WRAP=FAIL reason=invalid-input" >&2
+    exit 2
+  }
+done
+[[ "$output_dir" == /* && "$output_dir" != "/" ]] || {
+  echo "RECOVERY_KEY_WRAP=FAIL reason=output-dir-absolute-path-required" >&2
+  exit 2
+}
+command -v age >/dev/null || { echo "RECOVERY_KEY_WRAP=FAIL reason=age-missing" >&2; exit 2; }
+
+mode="$(stat -c '%a' "$fresh_key" 2>/dev/null || stat -f '%Lp' "$fresh_key")"
+[[ "$mode" == "600" || "$mode" == "400" ]] || {
+  echo "RECOVERY_KEY_WRAP=FAIL reason=unsafe-fresh-key-mode" >&2
+  exit 2
+}
+
+[[ -f "$archive.sha256" ]] || {
+  echo "RECOVERY_KEY_WRAP=FAIL reason=missing-archive-sha256" >&2
+  exit 2
+}
+(cd "$(dirname "$archive")" && sha256sum -c "$(basename "$archive.sha256")" >/dev/null) || {
+  echo "RECOVERY_KEY_WRAP=FAIL reason=archive-sha256-mismatch" >&2
+  exit 2
+}
+
+recipient="$(tr -d '\r\n' < "$recipient_file")"
+[[ "$recipient" == age1* ]] || {
+  echo "RECOVERY_KEY_WRAP=FAIL reason=invalid-baseline-recipient" >&2
+  exit 2
+}
+
+mkdir -p "$output_dir"
+chmod 700 "$output_dir"
+
+archive_base="$(basename "$archive")"
+fresh_base="$(basename "$fresh_key")"
+wrapped="$output_dir/$fresh_base.age"
+fresh_sha="$output_dir/$fresh_base.sha256"
+wrapped_sha="$wrapped.sha256"
+archive_sha_copy="$output_dir/$archive_base.sha256"
+recipient_copy="$output_dir/$(basename "$recipient_file")"
+evidence="$output_dir/RECOVERY-KEY-CUSTODY.json"
+
+rm -f "$wrapped" "$fresh_sha" "$wrapped_sha" "$archive_sha_copy" "$recipient_copy" "$evidence"
+
+age -r "$recipient" -o "$wrapped" "$fresh_key"
+sha256sum "$fresh_key" | sed "s#  .*#  $fresh_base#" > "$fresh_sha"
+sha256sum "$wrapped" | sed "s#  .*#  $(basename "$wrapped")#" > "$wrapped_sha"
+cp "$archive.sha256" "$archive_sha_copy"
+cp "$recipient_file" "$recipient_copy"
+chmod 600 "$wrapped" "$fresh_sha" "$wrapped_sha" "$archive_sha_copy" "$recipient_copy"
+
+archive_sha="$(awk '{print $1}' "$archive.sha256")"
+fresh_key_sha="$(awk '{print $1}' "$fresh_sha")"
+wrapped_key_sha="$(awk '{print $1}' "$wrapped_sha")"
+
+python3 - "$evidence" "$archive_base" "$archive_sha" "$fresh_base" "$fresh_key_sha" "$(basename "$wrapped")" "$wrapped_key_sha" "$(basename "$recipient_copy")" <<'PY'
+import json,sys
+out,archive,archive_sha,fresh,fresh_sha,wrapped,wrapped_sha,recipient=sys.argv[1:]
+payload={
+  "schema_version":1,
+  "status":"pass",
+  "archive_basename":archive,
+  "archive_sha256":archive_sha,
+  "fresh_key_basename":fresh,
+  "fresh_key_sha256":fresh_sha,
+  "wrapped_key_basename":wrapped,
+  "wrapped_key_sha256":wrapped_sha,
+  "baseline_recipient_basename":recipient,
+  "raw_fresh_key_in_output":False,
+  "credential_values_recorded":False,
+  "private_key_contents_recorded":False,
+  "plaintext_recorded":False
+}
+open(out,"w",encoding="utf-8").write(json.dumps(payload,sort_keys=True,indent=2)+"\n")
+PY
+chmod 600 "$evidence"
+
+[[ ! -e "$output_dir/$fresh_base" ]] || {
+  echo "RECOVERY_KEY_WRAP=FAIL reason=raw-fresh-key-in-output" >&2
+  exit 2
+}
+
+echo "RECOVERY_KEY_WRAP=PASS"
+echo "RECOVERY_KEY_CUSTODY_EVIDENCE=PASS path=$evidence"
