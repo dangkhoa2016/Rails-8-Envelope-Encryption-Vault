@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+file="${1:?usage: TARGET_DATABASE_URL=... script/restore-db PATH.dump[.age]}"
+: "${TARGET_DATABASE_URL:?TARGET_DATABASE_URL is required}"
+script/verify-backup "$file"
+
+if [[ "$file" == *.age ]]; then
+  : "${BACKUP_AGE_IDENTITY:?BACKUP_AGE_IDENTITY is required for encrypted backups}"
+  age -d -i "$BACKUP_AGE_IDENTITY" "$file" | pg_restore --clean --if-exists --no-owner --no-acl --dbname="$TARGET_DATABASE_URL"
+else
+  pg_restore --clean --if-exists --no-owner --no-acl --dbname="$TARGET_DATABASE_URL" "$file"
+fi
+
+echo "Restore completed. Start the app with the matching recovery KEK and verify a canary secret."
