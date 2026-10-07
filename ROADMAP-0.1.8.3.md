@@ -30,9 +30,18 @@ Acceptance must prove remote upload/download, wrapped fresh-key recovery, archiv
 
 ## Milestone 4 — Manual accessibility acceptance
 
-Status: AUTOMATED PREFLIGHT PASS / MANUAL PENDING.
+Status: PASS.
 
-Automated accessibility evidence does not constitute a WCAG conformance claim.
+Acceptance evidence:
+- automated accessibility preflight: PASS;
+- manual accessibility status: `COMPLETE_NO_BLOCKERS`;
+- required human checks: 5/5 PASS;
+- unresolved manual accessibility defects: none reported;
+- evidence: `docs/UX-ACCESSIBILITY-MANUAL-EVIDENCE-0.1.8.3-dev.json`;
+- worksheet: `docs/DEV-0.1.8.3-MILESTONE-4-MANUAL-ACCESSIBILITY-WORKSHEET-2026-10-07.md`;
+- formal WCAG conformance is not claimed (`wcag_conformance=false`).
+
+Automated accessibility evidence remains distinct from the recorded human acceptance evidence.
 
 ## Rules
 
