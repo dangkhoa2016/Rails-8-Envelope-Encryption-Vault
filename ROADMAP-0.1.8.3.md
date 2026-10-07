@@ -18,7 +18,7 @@ Reconstruction verification:
 
 ## Milestone 2 — Canonical FULL PRIVATE packaging
 
-Status: RECONSTRUCTION IN PROGRESS.
+Status: PASS (reconstructed-equivalent after host restart).
 
 Canonical builder must assemble DEV/RC/rollback/private authority/release evidence/database dump, create an internal SHA manifest, encrypt with a fresh age identity, and invoke Milestone 1 custody.
 
