@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+OUT="${ERROR_PREFLIGHT_EVIDENCE_OUT:-$ROOT/tmp/release-artifacts/ERROR-CORRELATION-PREFLIGHT.json}"
+LOG="${ERROR_PREFLIGHT_LOG_OUT:-$ROOT/tmp/release-artifacts/ERROR-CORRELATION-PREFLIGHT.log}"
+VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
+tmp="$(mktemp -d)"
+server_pid=""
+
+cleanup() {
+  if [[ -n "$server_pid" ]]; then
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+  fi
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+
+port="$(python3 - <<'PY'
+import socket
+for p in range(3300, 3400):
+    s=socket.socket()
+    try: s.bind(("127.0.0.1", p))
+    except OSError: s.close(); continue
+    s.close(); print(p); break
+else: raise SystemExit("no free error preflight port")
+PY
+)"
+mkdir -p "$(dirname "$OUT")" "$(dirname "$LOG")"
+cd "$ROOT"
+source ./activate-kaggle.sh >/dev/null
+
+APP_HOSTS=127.0.0.1,localhost DEMO_MODE=true FORCE_SSL=false ASSUME_SSL=false ERROR_PREFLIGHT_PROBE=true RAILS_ENV=production PORT="$port" bin/rails server -b 127.0.0.1 -p "$port" >"$tmp/server.log" 2>&1 &
+server_pid=$!
+
+for _ in $(seq 1 40); do
+  if curl -fsS -o /dev/null -H "Host: 127.0.0.1" "http://127.0.0.1:$port/up"; then
+    break
+  fi
+  if ! kill -0 "$server_pid" 2>/dev/null; then
+    tail -n 80 "$tmp/server.log" >&2
+    exit 1
+  fi
+  sleep 0.5
+done
+
+fetch() {
+  local name="$1" path="$2" rid="$3"
+  curl -sS -D "$tmp/$name.headers" -o "$tmp/$name.body"     -H "Host: 127.0.0.1" -H "X-Request-Id: $rid"     "http://127.0.0.1:$port$path"
+}
+fetch not_found "/this-route-does-not-exist-fix42" "fix42-404-correlation"
+fetch unprocessable "/__error_preflight/422" "fix42-422-correlation"
+fetch internal_error "/__error_preflight/500" "fix42-500-correlation"
+VERSION="$VERSION" ROOT="$ROOT" python3 - "$tmp" "$OUT" "$LOG" <<'PY'
+import base64, json, os, re, sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+tmp, out, log = map(Path, sys.argv[1:4])
+root = Path(os.environ["ROOT"]).resolve()
+
+cases = {
+    "not_found": (404, "fix42-404-correlation", "Page not found"),
+    "unprocessable": (422, "fix42-422-correlation", "Request could not be processed"),
+    "internal_error": (500, "fix42-500-correlation", "Something went wrong"),
+}
+
+def parse_headers(path):
+    raw=path.read_text(errors="replace").replace("\r\n","\n")
+    blocks=[b for b in raw.split("\n\n") if b.strip()]
+    lines=blocks[-1].splitlines()
+    m=re.match(r"HTTP/\S+\s+(\d+)", lines[0])
+    if not m: raise SystemExit(f"invalid HTTP response in {path.name}")
+    headers={}
+    for line in lines[1:]:
+        if ":" not in line: continue
+        k,v=line.split(":",1)
+        headers.setdefault(k.strip().lower(), []).append(v.strip())
+    return int(m.group(1)), headers
+def secret_candidates():
+    values=[]
+    for name in ("DATABASE_URL","TEST_DATABASE_URL","REDIS_URL","SECRET_KEY_BASE"):
+        v=os.environ.get(name,"")
+        if v: values.append(v.encode())
+    kek_dir=os.environ.get("VAULT_KEK_DIR","")
+    kid=os.environ.get("VAULT_ACTIVE_KEK_ID","")
+    if kek_dir and kid:
+        p=Path(kek_dir)/f"{kid}.key"
+        if p.is_file():
+            raw=p.read_bytes()
+            values.extend([raw, raw.hex().encode(), base64.b64encode(raw)])
+    age_path=os.environ.get("BACKUP_AGE_IDENTITY","")
+    if age_path and Path(age_path).is_file():
+        raw=Path(age_path).read_bytes()
+        values.extend([raw, raw.hex().encode(), base64.b64encode(raw)])
+    return [v for v in values if len(v) >= 8]
+
+secrets=secret_candidates()
+server_log=(tmp/"server.log").read_text(errors="replace")
+results={}
+for name,(expected,rid,title) in cases.items():
+    status, headers=parse_headers(tmp/f"{name}.headers")
+    body_bytes=(tmp/f"{name}.body").read_bytes()
+    body=body_bytes.decode(errors="replace")
+    if status != expected:
+        raise SystemExit(f"{name} status mismatch: {status} != {expected}")
+    if title not in body:
+        raise SystemExit(f"{name} branded message missing")
+    if rid not in body:
+        raise SystemExit(f"{name} request id missing from body")
+    response_rid=", ".join(headers.get("x-request-id", []))
+    if rid not in response_rid:
+        raise SystemExit(f"{name} X-Request-Id correlation missing")
+    if rid not in server_log:
+        raise SystemExit(f"{name} request id missing from server log")
+    runtime_root=os.environ.get("RUNTIME_ROOT", "").strip()
+    forbidden_body=[
+        "ActionController::", "RuntimeError", "Traceback",
+        "FIX42 controlled", str(root),
+        "app/controllers/", "config/environments/",
+    ]
+    if runtime_root:
+        forbidden_body.append(str(Path(runtime_root).resolve()))
+    if any(token in body for token in forbidden_body):
+        raise SystemExit(f"{name} leaked internal diagnostics in response body")
+    if any(secret in body_bytes for secret in secrets):
+        raise SystemExit(f"{name} leaked a secret value in response body")
+    cache=", ".join(headers.get("cache-control", [])).lower()
+    if "no-store" not in cache:
+        raise SystemExit(f"{name} response is not no-store")
+    results[name]={"status":status,"request_id_present":True,"log_correlation":True}
+
+data={
+    "schema_version":1,
+    "release_version":os.environ["VERSION"],
+    "generated_at":datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "status":"pass",
+    "not_found":results["not_found"]["status"],
+    "unprocessable_entity":results["unprocessable"]["status"],
+    "internal_server_error":results["internal_error"]["status"],
+    "request_id_present":True,
+    "request_log_correlation":True,
+    "stack_trace_exposed":False,
+    "local_filesystem_path_exposed":False,
+    "secret_values_exposed":False,
+    "cache_control_no_store":True,
+    "contains_secret_values":False,
+}
+out.write_text(json.dumps(data,sort_keys=True,indent=2)+"\n")
+out.chmod(0o644)
+summary=[
+    f"release_version={data['release_version']}",
+    "PRODUCTION_ERROR_PREFLIGHT=PASS",
+    "error_404=PASS",
+    "error_422=PASS",
+    "error_500=PASS",
+    "request_id_response=PASS",
+    "request_id_log_correlation=PASS",
+    "stack_trace_exposed=NO",
+    "local_filesystem_path_exposed=NO",
+    "secret_values_exposed=NO",
+    "error_response_cache_no_store=PASS",
+]
+log.write_text("\n".join(summary)+"\n")
+log.chmod(0o644)
+PY
+
+echo "PRODUCTION_ERROR_PREFLIGHT=PASS evidence=$OUT"
+echo "ERROR_CORRELATION=PASS"
+echo "ERROR_SECRET_VALUES=ABSENT"
