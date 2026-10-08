@@ -1,0 +1,51 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "minitest/autorun"
+require_relative "../app/services/security/totp"
+require_relative "../app/services/vault/env_parser"
+
+class SecuritySelfTest < Minitest::Test
+  RFC_SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+  RFC_VECTORS = {
+    59 => "94287082",
+    1_111_111_109 => "07081804",
+    1_111_111_111 => "14050471",
+    1_234_567_890 => "89005924",
+    2_000_000_000 => "69279037",
+    20_000_000_000 => "65353130"
+  }.freeze
+
+  def test_rfc6238_sha1_vectors
+    RFC_VECTORS.each do |timestamp, expected|
+      assert_equal expected, Security::Totp.code(secret: RFC_SECRET, at: Time.at(timestamp), digits: 8)
+    end
+  end
+
+  def test_totp_validation_window
+    secret = Security::Totp.generate_secret
+    now = Time.at(1_700_000_000)
+    token = Security::Totp.code(secret: secret, at: now)
+    assert Security::Totp.valid?(token: token, secret: secret, at: now)
+    refute Security::Totp.valid?(token: "000000", secret: secret, at: now) if token != "000000"
+  end
+
+  def test_env_parser_preserves_equals_and_unicode
+    entries = Vault::EnvParser.parse("TOKEN=a=b=c\nNOTE=\"xin chào thế giới\"\n")
+    assert_equal "a=b=c", entries[0]["value"]
+    assert_equal "xin chào thế giới", entries[1]["value"]
+  end
+
+  def test_env_parser_round_trip_for_escaped_values
+    source = [
+      { "key" => "A", "value" => "hello world" },
+      { "key" => "B", "value" => "line1\nline2" },
+      { "key" => "C", "value" => 'quote " slash \\' }
+    ]
+    assert_equal source, Vault::EnvParser.parse(Vault::EnvParser.dump(source))
+  end
+
+  def test_env_parser_rejects_duplicate_keys
+    assert_raises(ArgumentError) { Vault::EnvParser.parse("A=1\nA=2\n") }
+  end
+end
