@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ENV_FILE="${OPS_ENV_FILE:-/etc/ruby-envelope-vault/ops.env}"
+[[ -r "$ENV_FILE" ]] || { echo "FAIL unreadable env: $ENV_FILE" >&2; exit 1; }
+set -a
+. "$ENV_FILE"
+set +a
+
+URL="${APP_URL:?APP_URL must be set in $ENV_FILE}"
+HOST="$(python3 - "$URL" <<'PY'
+import sys, urllib.parse
+u=urllib.parse.urlparse(sys.argv[1])
+if u.scheme != "https" or not u.hostname:
+    raise SystemExit(2)
+print(u.hostname)
+PY
+)" || { echo "FAIL APP_URL must be https://<host>" >&2; exit 1; }
+
+fail(){ echo "FAIL $*" >&2; exit 1; }
+pass(){ echo "PASS $*"; }
+
+[[ "$(systemctl is-active ruby-envelope-vault-web.service)" = active ]] || fail rails_service
+pass rails_service
+[[ "$(systemctl is-enabled ruby-envelope-vault-web.service)" = enabled ]] || fail rails_service_enabled
+pass rails_service_enabled
+[[ "$(systemctl is-active caddy.service)" = active ]] || fail caddy_service
+pass caddy_service
+[[ "$(systemctl is-enabled caddy.service)" = enabled ]] || fail caddy_service_enabled
+pass caddy_service_enabled
+
+local_up="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: $HOST" http://127.0.0.1:3000/up)"
+[[ "$local_up" = 200 ]] || fail "local_up http=$local_up"
+pass "local_up http=$local_up"
+local_ready="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: $HOST" http://127.0.0.1:3000/ready)"
+[[ "$local_ready" = 200 ]] || fail "local_ready http=$local_ready"
+pass "local_ready http=$local_ready"
+
+http_headers="$(mktemp)"
+page_headers="$(mktemp)"
+page_body="$(mktemp)"
+trap 'rm -f "$http_headers" "$page_headers" "$page_body"' EXIT
+
+curl -fsS --max-time 10 -D "$http_headers" -o /dev/null "http://$HOST/" || fail public_http
+grep -Eq '^HTTP/[^ ]+ 30[1278]' "$http_headers" || fail http_redirect_status
+grep -Eiq '^location: https://' "$http_headers" || fail http_redirect_location
+pass http_to_https_redirect
+
+ready_code="$(curl -fsS --max-time 15 -o /dev/null -w '%{http_code}' "$URL/ready")"
+[[ "$ready_code" = 200 ]] || fail "https_ready http=$ready_code"
+pass "https_ready http=$ready_code"
+up_code="$(curl -fsS --max-time 15 -o /dev/null -w '%{http_code}' "$URL/up")"
+[[ "$up_code" = 200 ]] || fail "https_up http=$up_code"
+pass "https_up http=$up_code"
+
+curl -fsS --max-time 15 -D "$page_headers" "$URL/session/new" -o "$page_body"
+grep -Eiq '^strict-transport-security:' "$page_headers" || fail hsts
+grep -Eiq '^x-content-type-options: nosniff' "$page_headers" || fail nosniff
+grep -Eiq '^x-frame-options: DENY' "$page_headers" || fail frame_options
+grep -Eiq '^content-security-policy:.*style-src[^;]*nonce-' "$page_headers" || fail style_nonce_csp
+grep -q '<meta name="csp-nonce"' "$page_body" || fail csp_nonce_meta
+pass security_headers_and_csp_nonce
+
+assets="$(grep -Eo '/assets/[^" ]+\.(css|js)' "$page_body" | sort -u)"
+[[ -n "$assets" ]] || fail no_assets_found
+while IFS= read -r asset; do
+  headers="$(curl -fsSI "$URL$asset")" || fail "asset_fetch $asset"
+  code="$(printf '%s\n' "$headers" | awk 'NR==1{print $2}')"
+  ctype="$(printf '%s\n' "$headers" | awk 'tolower($1)=="content-type:"{print $2; exit}' | tr -d '\r')"
+  [[ "$code" = 200 ]] || fail "asset_status $asset http=$code"
+  case "$asset" in
+    *.css) [[ "$ctype" = text/css* ]] || fail "asset_mime $asset type=$ctype" ;;
+    *.js)  [[ "$ctype" = text/javascript* || "$ctype" = application/javascript* ]] || fail "asset_mime $asset type=$ctype" ;;
+  esac
+done <<< "$assets"
+pass assets
+
+echo "APP_URL=$URL"
+echo "FINAL_HTTPS_ACCEPTANCE=PASS"

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -u
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ENV_FILE="${OPS_ENV_FILE:-/etc/ruby-envelope-vault/ops.env}"
+status=0
+check(){ printf '%-34s %s\n' "$1" "$2"; }
+bad(){ check "$1" FAIL; status=1; }
+
+if [[ -r "$ENV_FILE" ]]; then
+  set -a; . "$ENV_FILE"; set +a
+  check ops_env PASS
+else
+  bad ops_env
+fi
+
+for cmd in ruby bundle caddy curl python3; do
+  command -v "$cmd" >/dev/null 2>&1 && check "$cmd" "$(command -v "$cmd")" || bad "$cmd"
+done
+
+[[ -n "${APP_URL:-}" && "$APP_URL" == https://* ]] && check app_url "$APP_URL" || bad app_url
+[[ -n "${APP_HOSTS:-}" ]] && check app_hosts "$APP_HOSTS" || bad app_hosts
+
+[[ "$(systemctl is-enabled ruby-envelope-vault-web.service 2>/dev/null)" = enabled ]] && check web_enabled PASS || bad web_enabled
+[[ "$(systemctl is-active ruby-envelope-vault-web.service 2>/dev/null)" = active ]] && check web_active PASS || bad web_active
+[[ "$(systemctl is-enabled caddy.service 2>/dev/null)" = enabled ]] && check caddy_enabled PASS || bad caddy_enabled
+[[ "$(systemctl is-active caddy.service 2>/dev/null)" = active ]] && check caddy_active PASS || bad caddy_active
+
+[[ -f "$ROOT/public/assets/.manifest.json" ]] && check asset_manifest PASS || bad asset_manifest
+asset_count="$(find "$ROOT/public/assets" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+(( asset_count >= 5 )) && check asset_count "$asset_count" || bad asset_count
+
+if [[ -n "${APP_URL:-}" ]]; then
+  "$ROOT/script/https-acceptance" >/tmp/revault-https-doctor.log 2>&1
+  rc=$?
+  if [[ $rc -eq 0 ]]; then check https_acceptance PASS; else bad https_acceptance; cat /tmp/revault-https-doctor.log; fi
+  rm -f /tmp/revault-https-doctor.log
+fi
+
+exit "$status"
