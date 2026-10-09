@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd "$(dirname "$0")/.."
+
+mode="${1:-systemd}"
+case "$mode" in systemd|cron) ;; *) echo "usage: script/install-ops-scheduler [systemd|cron]" >&2; exit 64 ;; esac
+
+root="${OPS_INSTALL_ROOT:-/}"
+prefix="${OPS_INSTALL_PREFIX:-/opt/ruby-envelope-vault/current}"
+env_file="${OPS_INSTALL_ENV_FILE:-/etc/ruby-envelope-vault/ops.env}"
+service_user="${OPS_SERVICE_USER:-ruby-vault}"
+service_group="${OPS_SERVICE_GROUP:-$service_user}"
+dr_service_user="${OPS_DR_SERVICE_USER:-root}"
+dr_service_group="${OPS_DR_SERVICE_GROUP:-$dr_service_user}"
+enable="${OPS_INSTALL_ENABLE:-0}"
+
+[[ "$root" == /* ]] || { echo "ERROR OPS_INSTALL_ROOT must be absolute" >&2; exit 1; }
+[[ "$prefix" == /* && "$prefix" != "/" ]] || { echo "ERROR OPS_INSTALL_PREFIX must be an absolute non-root path" >&2; exit 1; }
+[[ "$env_file" == /* && "$env_file" != "/" ]] || { echo "ERROR OPS_INSTALL_ENV_FILE must be an absolute file path" >&2; exit 1; }
+[[ "$prefix" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "ERROR unsafe OPS_INSTALL_PREFIX" >&2; exit 1; }
+[[ "$env_file" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "ERROR unsafe OPS_INSTALL_ENV_FILE" >&2; exit 1; }
+[[ "$service_user" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || { echo "ERROR unsafe OPS_SERVICE_USER" >&2; exit 1; }
+[[ "$service_group" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || { echo "ERROR unsafe OPS_SERVICE_GROUP" >&2; exit 1; }
+[[ "$dr_service_user" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || { echo "ERROR unsafe OPS_DR_SERVICE_USER" >&2; exit 1; }
+[[ "$dr_service_group" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || { echo "ERROR unsafe OPS_DR_SERVICE_GROUP" >&2; exit 1; }
+[[ "$enable" == "0" || "$enable" == "1" ]] || { echo "ERROR OPS_INSTALL_ENABLE must be 0 or 1" >&2; exit 1; }
+
+root_path() {
+  local p="$1"
+  if [ "$root" = "/" ]; then printf '%s\n' "$p"; else printf '%s%s\n' "${root%/}" "$p"; fi
+}
+
+if [ "$root" = "/" ] && [ "$(id -u)" -ne 0 ]; then
+  echo "ERROR root privileges are required for live installation" >&2
+  exit 1
+fi
+
+src="$(pwd -P)"
+dst="$(root_path "$prefix")"
+env_dst="$(root_path "$env_file")"
+dst_resolved="$(readlink -f "$dst" 2>/dev/null || true)"
+if [ "$src" != "$dst" ] && [ "$src" != "$dst_resolved" ]; then
+  rm -rf "$dst"
+  mkdir -p "$dst"
+  tar -C "$src" --exclude=.git --exclude=.env --exclude=.env.\* --exclude=.fix\* --exclude=tmp --exclude=log --exclude=storage --exclude=\*.key --exclude=\*.pem --exclude=\*.agekey -cf - . | tar -C "$dst" -xf -
+fi
+mkdir -p "$(dirname "$env_dst")"
+
+if [ ! -f "$env_dst" ]; then
+  install -m 600 ops/ops.env.example "$env_dst"
+  echo "CREATED env=$env_dst"
+else
+  chmod 600 "$env_dst"
+  echo "PRESERVED env=$env_dst"
+fi
+
+read_env_path() {
+  local key="$1"
+  sed -n "s/^[[:space:]]*${key}=//p" "$env_dst" | tail -1
+}
+
+if [ "$root" = "/" ]; then
+  id "$service_user" >/dev/null 2>&1 || { echo "ERROR service user does not exist: $service_user" >&2; exit 1; }
+  id -g "$service_group" >/dev/null 2>&1 || getent group "$service_group" >/dev/null 2>&1 || { echo "ERROR service group does not exist: $service_group" >&2; exit 1; }
+  id "$dr_service_user" >/dev/null 2>&1 || { echo "ERROR DR service user does not exist: $dr_service_user" >&2; exit 1; }
+  id -g "$dr_service_group" >/dev/null 2>&1 || getent group "$dr_service_group" >/dev/null 2>&1 || { echo "ERROR DR service group does not exist: $dr_service_group" >&2; exit 1; }
+fi
+
+for key in BACKUP_DIR OPS_STATE_DIR OPS_EVIDENCE_DIR; do
+  dir_value="$(read_env_path "$key")"
+  [[ "$dir_value" == /* && "$dir_value" != "/" ]] || { echo "ERROR $key must be an absolute non-root path in $env_dst" >&2; exit 1; }
+  target_dir="$(root_path "$dir_value")"
+  mkdir -p "$target_dir"
+  chmod 700 "$target_dir"
+  if [ "$root" = "/" ]; then chown "$service_user:$service_group" "$target_dir"; fi
+done
+
+if [ "$mode" = "systemd" ]; then
+  unit_dir="$(root_path /etc/systemd/system)"
+  mkdir -p "$unit_dir"
+  for name in ruby-envelope-vault-ops-daily.service ruby-envelope-vault-ops-daily.timer ruby-envelope-vault-dr.service ruby-envelope-vault-dr.timer; do
+    sed_args=(-e "s#/opt/ruby-envelope-vault/current#$prefix#g" -e "s#/etc/ruby-envelope-vault/ops.env#$env_file#g")
+    if [ "$name" = "ruby-envelope-vault-ops-daily.service" ]; then
+      sed_args+=(-e "s#User=ruby-vault#User=$service_user#" -e "s#Group=ruby-vault#Group=$service_group#" -e "s#Environment=OPS_SERVICE_USER=ruby-vault#Environment=OPS_SERVICE_USER=$service_user#" -e "s#Environment=OPS_SERVICE_GROUP=ruby-vault#Environment=OPS_SERVICE_GROUP=$service_group#")
+    elif [ "$name" = "ruby-envelope-vault-dr.service" ]; then
+      sed_args+=(-e "s#User=root#User=$dr_service_user#" -e "s#Group=root#Group=$dr_service_group#" -e "s#Environment=OPS_SERVICE_USER=ruby-vault#Environment=OPS_SERVICE_USER=$service_user#" -e "s#Environment=OPS_SERVICE_GROUP=ruby-vault#Environment=OPS_SERVICE_GROUP=$service_group#")
+    fi
+    sed "${sed_args[@]}" "ops/systemd/$name" > "$unit_dir/$name"
+    chmod 644 "$unit_dir/$name"
+  done
+  if [ "$root" = "/" ] && [ "$enable" = "1" ]; then
+    command -v systemctl >/dev/null || { echo "ERROR systemctl is required" >&2; exit 1; }
+    systemctl daemon-reload
+    systemctl enable --now ruby-envelope-vault-ops-daily.timer ruby-envelope-vault-dr.timer
+  fi
+  echo "PASS scheduler install mode=systemd root=$root enabled=$enable"
+else
+  cron_dir="$(root_path /etc/cron.d)"
+  mkdir -p "$cron_dir"
+  cron_file="$cron_dir/ruby-envelope-vault"
+  {
+    echo "SHELL=/bin/bash"
+    echo "PATH=/usr/local/bin:/usr/bin:/bin"
+    echo "15 2 * * * $service_user cd $prefix && set -a && . $env_file && set +a && OPS_SERVICE_USER=$service_user OPS_SERVICE_GROUP=$service_group script/scheduled-ops daily"
+    echo "30 3 * * 0 $dr_service_user cd $prefix && set -a && . $env_file && set +a && OPS_SERVICE_USER=$service_user OPS_SERVICE_GROUP=$service_group script/scheduled-ops dr"
+  } > "$cron_file"
+  chmod 644 "$cron_file"
+  echo "PASS scheduler install mode=cron root=$root"
+fi

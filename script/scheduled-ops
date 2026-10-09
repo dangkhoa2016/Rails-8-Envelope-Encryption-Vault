@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd "$(dirname "$0")/.."
+
+if [ -n "${OPS_POSTGRES_BIN:-}" ]; then
+  [[ "$OPS_POSTGRES_BIN" == /* && "$OPS_POSTGRES_BIN" != "/" ]] || { echo "ERROR OPS_POSTGRES_BIN must be an absolute non-root path" >&2; exit 1; }
+  [ -d "$OPS_POSTGRES_BIN" ] || { echo "ERROR OPS_POSTGRES_BIN does not exist: $OPS_POSTGRES_BIN" >&2; exit 1; }
+  export PATH="$OPS_POSTGRES_BIN:$PATH"
+fi
+
+mode="${1:-daily}"
+case "$mode" in daily|dr|all) ;; *) echo "usage: script/scheduled-ops [daily|dr|all]" >&2; exit 64 ;; esac
+
+state_dir="${OPS_STATE_DIR:-./tmp/ops-state}"
+evidence_dir="${OPS_EVIDENCE_DIR:-./tmp/ops-evidence}"
+lock_file="${OPS_LOCK_FILE:-$state_dir/scheduled-ops.lock}"
+mkdir -p "$state_dir" "$evidence_dir"
+chmod 700 "$state_dir" "$evidence_dir"
+
+repair_shared_ownership() {
+  local rc=$?
+  if [ "$(id -u)" -eq 0 ] && [ -n "${OPS_SERVICE_USER:-}" ]; then
+    local owner="${OPS_SERVICE_USER}"
+    local group="${OPS_SERVICE_GROUP:-$owner}"
+    [[ "$owner" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || { echo "ERROR unsafe OPS_SERVICE_USER" >&2; return 1; }
+    [[ "$group" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || { echo "ERROR unsafe OPS_SERVICE_GROUP" >&2; return 1; }
+    [[ "$state_dir" == /* && "$state_dir" != "/" && "$evidence_dir" == /* && "$evidence_dir" != "/" ]] || {
+      echo "ERROR refusing root ownership repair on unsafe ops paths" >&2
+      return 1
+    }
+    chown -R "$owner:$group" "$state_dir" "$evidence_dir"
+    chmod 700 "$state_dir" "$evidence_dir"
+    find "$state_dir" "$evidence_dir" -type f -exec chmod 600 {} +
+  fi
+  return "$rc"
+}
+trap 'rc=$?; repair_shared_ownership || rc=1; exit "$rc"' EXIT
+
+exec 9>"$lock_file"
+chmod 600 "$lock_file"
+if ! flock -n 9; then
+  echo "SKIP scheduled ops: another run holds the lock"
+  exit 75
+fi
+
+started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+maintenance_status="skipped"
+dr_status="skipped"
+status="pass"
+backup_basename=""
+exit_code=0
+safe_alert() {
+  local message="$1"
+  export ALERT_TS="$started" ALERT_STATUS="$status" ALERT_MODE="$mode" ALERT_MESSAGE="$message"
+  payload="$(python3 - <<'PY'
+import json, os
+print(json.dumps({
+  "schema":"ruby-envelope-vault.ops-alert.v1",
+  "timestamp":os.environ["ALERT_TS"],
+  "status":os.environ["ALERT_STATUS"],
+  "mode":os.environ["ALERT_MODE"],
+  "message":os.environ["ALERT_MESSAGE"],
+}, separators=(",",":"), sort_keys=True))
+PY
+)"
+  if [ -n "${OPS_ALERT_FILE:-}" ]; then
+    umask 077
+    mkdir -p "$(dirname "$OPS_ALERT_FILE")"
+    printf '%s\n' "$payload" >> "$OPS_ALERT_FILE"
+    chmod 600 "$OPS_ALERT_FILE"
+  fi
+  if [ -n "${OPS_ALERT_WEBHOOK_URL:-}" ]; then
+    curl -fsS --retry 2 -H 'content-type: application/json' -d "$payload" "$OPS_ALERT_WEBHOOK_URL" >/dev/null
+  fi
+}
+
+latest_remote_backup() {
+  : "${OFFSITE_RCLONE_DEST:?OFFSITE_RCLONE_DEST is required for DR mode}"
+  rclone lsf "${OFFSITE_RCLONE_DEST%/}" --files-only --include 'ruby-envelope-vault-*.dump.age' |
+    LC_ALL=C sort | tail -1
+}
+run_daily() {
+  tmp_report="$(mktemp)"
+  if OPS_REPORT_FILE="$tmp_report" script/ops-maintenance >/dev/null; then
+    maintenance_status="pass"
+    backup_basename="$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])).get("backup") or {}).get("basename") or "")' "$tmp_report")"
+  else
+    maintenance_status="fail"
+    status="fail"
+    exit_code=1
+  fi
+  rm -f "$tmp_report"
+}
+
+run_dr() {
+  local base
+  base="$(latest_remote_backup)"
+  if [ -z "$base" ]; then
+    dr_status="fail"
+    status="fail"
+    exit_code=1
+    return
+  fi
+  if script/offsite-dr-rehearsal "$base" >/dev/null; then
+    dr_status="pass"
+    printf '%s\n' "$started" > "$state_dir/last-dr-success"
+    chmod 600 "$state_dir/last-dr-success"
+  else
+    dr_status="fail"
+    status="fail"
+    exit_code=1
+  fi
+}
+case "$mode" in
+  daily) run_daily ;;
+  dr) run_dr ;;
+  all) run_daily; [ "$status" = "pass" ] && run_dr || true ;;
+esac
+
+finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+export EVIDENCE_STARTED="$started" EVIDENCE_FINISHED="$finished" EVIDENCE_STATUS="$status"
+export EVIDENCE_MODE="$mode" EVIDENCE_MAINT="$maintenance_status" EVIDENCE_DR="$dr_status"
+export EVIDENCE_BACKUP="$backup_basename"
+evidence="$evidence_dir/scheduled-ops-$stamp.json"
+python3 - "$evidence" <<'PY'
+import json, os, sys
+payload={
+ "schema":"ruby-envelope-vault.scheduled-ops.v1",
+ "started_at":os.environ["EVIDENCE_STARTED"],
+ "finished_at":os.environ["EVIDENCE_FINISHED"],
+ "status":os.environ["EVIDENCE_STATUS"],
+ "mode":os.environ["EVIDENCE_MODE"],
+ "maintenance":os.environ["EVIDENCE_MAINT"],
+ "offsite_dr":os.environ["EVIDENCE_DR"],
+ "backup_basename":os.environ["EVIDENCE_BACKUP"] or None,
+}
+with open(sys.argv[1],"w",encoding="utf-8") as f:
+    json.dump(payload,f,separators=(",",":"),sort_keys=True)
+    f.write("\n")
+PY
+chmod 600 "$evidence"
+
+if [ "$status" != "pass" ]; then
+  safe_alert "scheduled operations failed"
+else
+  if [ "${OPS_ALERT_ON_SUCCESS:-0}" = "1" ]; then safe_alert "scheduled operations passed"; fi
+fi
+
+cat "$evidence"
+exit "$exit_code"
