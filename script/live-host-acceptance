@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd "$(dirname "$0")/.."
+
+phase="${1:-pre-reboot}"
+case "$phase" in
+  pre-reboot|post-reboot) ;;
+  *) echo "usage: script/live-host-acceptance [pre-reboot|post-reboot]" >&2; exit 64 ;;
+esac
+
+[ "$(id -u)" -eq 0 ] || { echo "ERROR live-host acceptance must run as root" >&2; exit 1; }
+[ "$(ps -p 1 -o comm= | tr -d ' ')" = "systemd" ] || { echo "ERROR PID 1 is not systemd" >&2; exit 1; }
+command -v systemctl >/dev/null 2>&1 || { echo "ERROR systemctl is required" >&2; exit 1; }
+systemctl is-system-running >/dev/null 2>&1 || {
+  state="$(systemctl is-system-running 2>/dev/null || true)"
+  case "$state" in running|degraded) ;; *) echo "ERROR systemd state=$state" >&2; exit 1 ;; esac
+}
+
+env_file="${OPS_INSTALL_ENV_FILE:-/etc/ruby-envelope-vault/ops.env}"
+[ -f "$env_file" ] || { echo "ERROR missing env file: $env_file" >&2; exit 1; }
+set -a
+. "$env_file"
+set +a
+
+if [ -n "${OPS_POSTGRES_BIN:-}" ]; then
+  [[ "$OPS_POSTGRES_BIN" == /* && "$OPS_POSTGRES_BIN" != "/" ]] || { echo "ERROR unsafe OPS_POSTGRES_BIN" >&2; exit 1; }
+  [ -x "$OPS_POSTGRES_BIN/pg_restore" ] || { echo "ERROR pg_restore missing under OPS_POSTGRES_BIN" >&2; exit 1; }
+  export PATH="$OPS_POSTGRES_BIN:$PATH"
+fi
+
+state_dir="${OPS_STATE_DIR:?OPS_STATE_DIR is required}"
+evidence_dir="${OPS_EVIDENCE_DIR:?OPS_EVIDENCE_DIR is required}"
+marker="$state_dir/live-host-acceptance-pre-reboot"
+daily_service=ruby-envelope-vault-ops-daily.service
+dr_service=ruby-envelope-vault-dr.service
+daily_timer=ruby-envelope-vault-ops-daily.timer
+dr_timer=ruby-envelope-vault-dr.timer
+
+pass(){ printf 'PASS %-32s %s\n' "$1" "${2:-}"; }
+fail(){ printf 'FAIL %-32s %s\n' "$1" "${2:-}" >&2; exit 1; }
+
+unit_success() {
+  local unit="$1"
+  local result status
+  result="$(systemctl show "$unit" -p Result --value)"
+  status="$(systemctl show "$unit" -p ExecMainStatus --value)"
+  [ "$result" = "success" ] && [ "$status" = "0" ]
+}
+
+latest_evidence() {
+  find "$evidence_dir" -maxdepth 1 -type f -name 'scheduled-ops-*.json' -printf '%T@ %p\n' |
+    sort -n | tail -1 | cut -d' ' -f2-
+}
+
+verify_latest_dr_evidence() {
+  local f
+  f="$(latest_evidence)"
+  [ -n "$f" ] || return 1
+  python3 - "$f" <<'PY'
+import json, sys
+p=json.load(open(sys.argv[1]))
+assert p["schema"] == "ruby-envelope-vault.scheduled-ops.v1"
+assert p["mode"] == "dr"
+assert p["status"] == "pass"
+assert p["offsite_dr"] == "pass"
+print(sys.argv[1])
+PY
+}
+
+echo "=== LIVE HOST ACCEPTANCE phase=$phase ==="
+pass pid1 systemd
+pass systemd_state "$(systemctl is-system-running 2>/dev/null || true)"
+pass postgres_restore "$(pg_restore --version)"
+
+if script/ops-scheduler-doctor systemd; then pass scheduler_doctor; else fail scheduler_doctor; fi
+
+case "$phase" in
+  pre-reboot)
+    systemctl start "$daily_service"
+    unit_success "$daily_service" && pass daily_service || fail daily_service
+
+    systemctl start "$dr_service"
+    unit_success "$dr_service" && pass dr_service || fail dr_service
+
+    test -s "$state_dir/last-dr-success" && pass last_dr_success "$(cat "$state_dir/last-dr-success")" || fail last_dr_success
+    ev="$(verify_latest_dr_evidence)" && pass dr_evidence "$ev" || fail dr_evidence
+
+    systemctl enable --now "$daily_timer" "$dr_timer"
+    systemctl is-enabled "$daily_timer" >/dev/null && pass daily_timer_enabled || fail daily_timer_enabled
+    systemctl is-enabled "$dr_timer" >/dev/null && pass dr_timer_enabled || fail dr_timer_enabled
+    systemctl is-active "$daily_timer" >/dev/null && pass daily_timer_active || fail daily_timer_active
+    systemctl is-active "$dr_timer" >/dev/null && pass dr_timer_active || fail dr_timer_active
+
+    boot_id="$(cat /proc/sys/kernel/random/boot_id)"
+    {
+      printf 'boot_id=%s\n' "$boot_id"
+      printf 'completed_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    } > "$marker"
+    chmod 600 "$marker"
+    if [ -n "${OPS_SERVICE_USER:-}" ]; then
+      chown "${OPS_SERVICE_USER}:${OPS_SERVICE_GROUP:-$OPS_SERVICE_USER}" "$marker"
+    fi
+    pass pre_reboot_marker "$marker"
+    echo "NEXT reboot the host, then run: script/live-host-acceptance post-reboot"
+    ;;
+  post-reboot)
+    [ -f "$marker" ] || fail pre_reboot_marker "missing $marker"
+    old_boot="$(sed -n 's/^boot_id=//p' "$marker")"
+    new_boot="$(cat /proc/sys/kernel/random/boot_id)"
+    [ -n "$old_boot" ] && [ "$old_boot" != "$new_boot" ] && pass reboot_verified "$new_boot" || fail reboot_verified "boot id did not change"
+
+    systemctl is-enabled "$daily_timer" >/dev/null && pass daily_timer_enabled || fail daily_timer_enabled
+    systemctl is-enabled "$dr_timer" >/dev/null && pass dr_timer_enabled || fail dr_timer_enabled
+    systemctl is-active "$daily_timer" >/dev/null && pass daily_timer_active || fail daily_timer_active
+    systemctl is-active "$dr_timer" >/dev/null && pass dr_timer_active || fail dr_timer_active
+
+    systemctl start "$daily_service"
+    unit_success "$daily_service" && pass daily_service_after_reboot || fail daily_service_after_reboot
+    systemctl start "$dr_service"
+    unit_success "$dr_service" && pass dr_service_after_reboot || fail dr_service_after_reboot
+
+    test -s "$state_dir/last-dr-success" && pass last_dr_success_after_reboot "$(cat "$state_dir/last-dr-success")" || fail last_dr_success_after_reboot
+    ev="$(verify_latest_dr_evidence)" && pass dr_evidence_after_reboot "$ev" || fail dr_evidence_after_reboot
+
+    echo "FINAL_LIVE_HOST_SYSTEMD_ACCEPTANCE=PASS"
+    ;;
+esac
