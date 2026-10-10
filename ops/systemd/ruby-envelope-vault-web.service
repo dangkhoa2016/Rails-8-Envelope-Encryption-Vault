@@ -1,0 +1,29 @@
+[Unit]
+Description=Ruby Envelope Vault Rails web application
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=ruby-vault
+Group=ruby-vault
+WorkingDirectory=/opt/ruby-envelope-vault/current
+EnvironmentFile=/etc/ruby-envelope-vault/ops.env
+Environment=RAILS_LOG_TO_STDOUT=1
+Environment=HOME=/var/lib/ruby-envelope-vault
+RuntimeDirectory=ruby-envelope-vault
+RuntimeDirectoryMode=0700
+ExecStart=/usr/local/bin/bundle exec puma -C /etc/ruby-envelope-vault/puma.rb
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ruby-envelope-vault /run/ruby-envelope-vault /tmp
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

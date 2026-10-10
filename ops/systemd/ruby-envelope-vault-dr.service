@@ -1,0 +1,17 @@
+[Unit]
+Description=Ruby Envelope Vault periodic offsite disaster-recovery rehearsal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=OPS_SERVICE_USER=ruby-vault
+Environment=OPS_SERVICE_GROUP=ruby-vault
+WorkingDirectory=/opt/ruby-envelope-vault/current
+EnvironmentFile=/etc/ruby-envelope-vault/ops.env
+ExecStart=/opt/ruby-envelope-vault/current/script/scheduled-ops dr
+NoNewPrivileges=true
+UMask=0077
+PrivateTmp=true
