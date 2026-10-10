@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd "$(dirname "$0")/.."
+
+: "${DATABASE_URL:?DATABASE_URL is required}"
+: "${BACKUP_AGE_RECIPIENT:?BACKUP_AGE_RECIPIENT is required}"
+: "${BACKUP_AGE_IDENTITY:?BACKUP_AGE_IDENTITY is required}"
+
+started_epoch="$(date +%s)"
+timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+backup_file=""
+dr_status="skipped"
+offsite_status="skipped"
+retention_status="not_run"
+report_file="${OPS_REPORT_FILE:-}"
+
+emit_report() {
+  local overall="$1"
+  local duration_seconds="$(($(date +%s) - started_epoch))"
+  local basename_value=""
+  local checksum_value=""
+  if [ -n "$backup_file" ] && [ -f "$backup_file" ]; then
+    basename_value="$(basename "$backup_file")"
+    checksum_value="$(sha256sum "$backup_file" | awk '{print $1}')"
+  fi
+  export OPS_MAINT_TIMESTAMP="$timestamp"
+  export OPS_MAINT_STATUS="$overall"
+  export OPS_MAINT_DURATION="$duration_seconds"
+  export OPS_MAINT_BACKUP="$basename_value"
+  export OPS_MAINT_SHA256="$checksum_value"
+  export OPS_MAINT_DR="$dr_status"
+  export OPS_MAINT_OFFSITE="$offsite_status"
+  export OPS_MAINT_RETENTION="$retention_status"
+
+  json="$(python3 - <<'PY'
+import json, os
+print(json.dumps({
+  "schema": "ruby-envelope-vault.ops-maintenance.v1",
+  "timestamp": os.environ["OPS_MAINT_TIMESTAMP"],
+  "status": os.environ["OPS_MAINT_STATUS"],
+  "duration_seconds": int(os.environ["OPS_MAINT_DURATION"]),
+  "backup": {
+    "basename": os.environ["OPS_MAINT_BACKUP"] or None,
+    "sha256": os.environ["OPS_MAINT_SHA256"] or None,
+  },
+  "dr_rehearsal": os.environ["OPS_MAINT_DR"],
+  "offsite_roundtrip": os.environ["OPS_MAINT_OFFSITE"],
+  "retention": os.environ["OPS_MAINT_RETENTION"],
+}, separators=(",", ":"), sort_keys=True))
+PY
+)"
+  if [ -n "$report_file" ]; then
+    umask 077
+    printf '%s\n' "$json" > "$report_file"
+    chmod 600 "$report_file"
+  fi
+  printf '%s\n' "$json"
+}
+
+on_error() {
+  local rc=$?
+  trap - ERR
+  emit_report fail
+  exit "$rc"
+}
+trap on_error ERR
+
+backup_output="$(BACKUP_DIR="${BACKUP_DIR:-./backups}" script/backup-db)"
+printf '%s\n' "$backup_output" >&2
+backup_file="$(printf '%s\n' "$backup_output" | sed -n 's/^Backup: //p' | tail -1)"
+[ -n "$backup_file" ] && [ -f "$backup_file" ]
+
+script/verify-backup "$backup_file" >&2
+
+if [ -n "${OFFSITE_DRIVER:-}" ]; then
+  script/offsite-roundtrip "$backup_file" >&2
+  offsite_status="pass"
+fi
+
+if [ "${RUN_DR_REHEARSAL:-0}" = "1" ]; then
+  : "${USER_EMAIL:?USER_EMAIL is required when RUN_DR_REHEARSAL=1}"
+  : "${ITEM_ID:?ITEM_ID is required when RUN_DR_REHEARSAL=1}"
+  : "${EXPECTED_CANARY_FIELD:?EXPECTED_CANARY_FIELD is required when RUN_DR_REHEARSAL=1}"
+  : "${EXPECTED_CANARY_VALUE:?EXPECTED_CANARY_VALUE is required when RUN_DR_REHEARSAL=1}"
+  script/dr-rehearsal "$backup_file" >&2
+  dr_status="pass"
+fi
+
+retention_output="$(BACKUP_DIR="${BACKUP_DIR:-./backups}" script/backup-retention)"
+printf '%s\n' "$retention_output" >&2
+if [ "${RETENTION_APPLY:-0}" = "1" ]; then
+  retention_status="applied"
+else
+  retention_status="dry_run"
+fi
+
+trap - ERR
+emit_report pass
