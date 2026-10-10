@@ -1,0 +1,38 @@
+service: ruby_envelope_vault
+image: <registry-user>/ruby-envelope-vault
+servers:
+  web:
+    - <server-ip>
+proxy:
+  ssl: true
+  host: <vault.example.com>
+  healthcheck:
+    path: /ready
+    interval: 10
+    timeout: 5
+registry:
+  username: <registry-user>
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+env:
+  secret:
+    - SECRET_KEY_BASE
+    - DATABASE_URL
+  clear:
+    APP_HOSTS: <vault.example.com>
+    ALLOW_SIGNUPS: "false"
+    DEMO_MODE: "false"
+    REQUIRE_MFA: "true"
+    VAULT_KEY_PROVIDER: local_file
+    VAULT_ACTIVE_KEK_ID: kek-2026-01
+    VAULT_KEK_DIR: /run/secrets/ruby-envelope-vault/keks
+    RAILS_LOG_TO_STDOUT: "true"
+    FORCE_SSL: "true"
+volumes:
+  - "/opt/ruby-envelope-vault/keks:/run/secrets/ruby-envelope-vault/keks:ro"
+builder:
+  arch: amd64
+aliases:
+  console: app exec --interactive --reuse "bin/rails console"
+  shell: app exec --interactive --reuse "bash"
+  logs: app logs -f
