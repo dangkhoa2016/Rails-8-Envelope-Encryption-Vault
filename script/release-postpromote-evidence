@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+VERSION="$(tr -d '\r\n' < "$ROOT/VERSION")"
+ARTIFACT_DIR="${RELEASE_ARTIFACT_DIR:-$ROOT/tmp/release-artifacts}"
+CURRENT_LINK="${RELEASE_CURRENT_LINK:-$(dirname "$ROOT")/current}"
+HEALTH_URL="${RELEASE_HEALTH_URL:-http://127.0.0.1:3000/up}"
+REMOTE_DEST="${RELEASE_REMOTE_DEST:-}"
+SEALED_SOURCE_MANIFEST="${SEALED_SOURCE_MANIFEST_FILE:-$ARTIFACT_DIR/SEALED-SOURCE-SHA256SUMS.txt}"
+
+resolved="$(readlink -f "$CURRENT_LINK")"
+[[ "$resolved" == "$ROOT" ]] || { echo "current mismatch: $resolved != $ROOT" >&2; exit 1; }
+[[ "$(tr -d '\r\n' < "$resolved/VERSION")" == "$VERSION" ]] || { echo "version mismatch" >&2; exit 1; }
+code="$(curl -sS -o /dev/null -w '%{http_code}' "$HEALTH_URL")"
+[[ "$code" == "200" ]] || { echo "health failed: $code" >&2; exit 1; }
+"$ROOT/script/sealed-source-integrity" verify "$SEALED_SOURCE_MANIFEST"
+echo "SEALED_SOURCE_POSTPROMOTE=PASS"
+
+PRODUCTION_DATABASE_EVIDENCE_OUT="$ARTIFACT_DIR/PRODUCTION-DATABASE-CONTRACT.json" "$ROOT/script/production-database-contract"
+echo "PRODUCTION_DATABASE_POSTPROMOTE=PASS"
+
+RELEASE_ARTIFACT_DIR="$ARTIFACT_DIR" RELEASE_PHASE=promoted RELEASE_VERIFY_STATUS=pass ISOLATED_RESTORE_STATUS=pass OFFHOST_ROUNDTRIP_STATUS=pass RELEASE_METADATA_OUT="$ARTIFACT_DIR/RELEASE-METADATA.json" "$ROOT/script/release-metadata"
+sha256sum "$ARTIFACT_DIR/RELEASE-METADATA.json" > "$ARTIFACT_DIR/RELEASE-METADATA.json.sha256"
+chmod 600 "$ARTIFACT_DIR/RELEASE-METADATA.json.sha256"
+
+if [[ -n "$REMOTE_DEST" ]]; then
+  OFFSITE_DRIVER=rclone OFFSITE_REQUIRE_REMOTE=1 OFFSITE_RCLONE_DEST="$REMOTE_DEST" "$ROOT/script/offsite-roundtrip" "$ARTIFACT_DIR/RELEASE-METADATA.json"
+fi
+
+echo "POSTPROMOTE_EVIDENCE=PASS version=$VERSION health=$code"

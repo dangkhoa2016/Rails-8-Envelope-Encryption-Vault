@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+MODE="${1:?usage: sealed-source-integrity create|verify MANIFEST}"
+MANIFEST="${2:?usage: sealed-source-integrity create|verify MANIFEST}"
+
+python3 - "$ROOT" "$MODE" "$MANIFEST" <<'PY'
+from pathlib import Path
+import hashlib
+import sys
+
+root=Path(sys.argv[1]).resolve()
+mode=sys.argv[2]
+manifest=Path(sys.argv[3]).resolve()
+
+EXCLUDED_DIRS={
+    ".git", ".bundle", "tmp", "log", "storage",
+    "vendor/bundle", "public/assets", "public/assets-dev",
+}
+
+def excluded(rel):
+    s=rel.as_posix()
+    if s == ".env" or s.startswith(".env."):
+        return True
+    if s.endswith((".key", ".pem", ".agekey")):
+        return True
+    for d in EXCLUDED_DIRS:
+        if s == d or s.startswith(d + "/"):
+            return True
+    return False
+
+def sha256(path):
+    h=hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda:f.read(1024*1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+def current_map():
+    rows={}
+    for p in sorted(root.rglob("*")):
+        if not p.is_file():
+            continue
+        rel=p.relative_to(root)
+        if excluded(rel):
+            continue
+        rows[rel.as_posix()]=sha256(p)
+    return rows
+
+if mode == "create":
+    rows=current_map()
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text("".join(f"{digest}  {name}\n" for name,digest in rows.items()))
+    manifest.chmod(0o644)
+    print(f"SEALED_SOURCE_MANIFEST=PASS files={len(rows)} path={manifest}")
+elif mode == "verify":
+    if not manifest.is_file():
+        raise SystemExit(f"sealed source manifest missing: {manifest}")
+    expected={}
+    for line in manifest.read_text().splitlines():
+        parts=line.split(None,1)
+        if len(parts)!=2:
+            raise SystemExit(f"invalid sealed source manifest row: {line}")
+        expected[parts[1].strip().lstrip("*")]=parts[0]
+    actual=current_map()
+    missing=sorted(set(expected)-set(actual))
+    extra=sorted(set(actual)-set(expected))
+    changed=sorted(name for name in set(expected)&set(actual) if expected[name] != actual[name])
+    if missing or extra or changed:
+        print("SEALED_SOURCE_INTEGRITY=FAIL")
+        print(f"missing={missing}")
+        print(f"extra={extra}")
+        print(f"changed={changed}")
+        raise SystemExit(1)
+    print(f"SEALED_SOURCE_INTEGRITY=PASS files={len(actual)}")
+else:
+    raise SystemExit(f"unsupported mode: {mode}")
+PY

@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+ARTIFACT_DIR="${RELEASE_ARTIFACT_DIR:-$ROOT/tmp/release-artifacts}"
+CURRENT_LINK="${RELEASE_CURRENT_LINK:-$(dirname "$ROOT")/current}"
+SOURCE="${PUBLIC_RELEASE_HISTORY_SOURCE:-$ROOT/tmp/release-history/RELEASE-HISTORY.json}"
+OUT="${PUBLIC_RELEASE_HISTORY_OUT:-$ARTIFACT_DIR/PUBLIC-RELEASE-HISTORY.md}"
+if [[ -e "$CURRENT_LINK" && "$(readlink -f "$CURRENT_LINK")" == "$ROOT" ]]; then
+  python3 - "$ROOT" "$OUT" <<'PYGUARD'
+from pathlib import Path
+import sys
+root=Path(sys.argv[1]).resolve(); out=Path(sys.argv[2]).resolve()
+try:
+    out.relative_to(root)
+except ValueError:
+    pass
+else:
+    raise SystemExit(f"accepted release output must remain outside source tree: {out}")
+PYGUARD
+fi
+python3 - "$SOURCE" "$OUT" <<'PY'
+import json,sys
+from pathlib import Path
+src=Path(sys.argv[1]); out=Path(sys.argv[2]); doc=json.loads(src.read_text())
+lines=[
+"# Public Release History","",
+"This public index contains only release version, evidence provenance, release status, and canonical artifact SHA-256 values. Operational filesystem paths and internal source locations are intentionally omitted.","",
+"| Release | Evidence provenance | Verify | Restore | Off-host | Promoted |",
+"|---|---|---|---|---|---|",
+]
+for r in doc["releases"]:
+    lines.append(f"| {r['release_version']} | {r['evidence_model']} | {r['release_verify']} | {r['isolated_restore']} | {r['offhost_roundtrip']} | {r['promotion_performed']} |")
+lines += ["","## Artifact integrity",""]
+for r in doc["releases"]:
+    lines += [f"### {r['release_version']}",""]
+    for name,sha in sorted(r.get("artifact_sha256",{}).items()):
+        lines.append(f"- `{name}` — `{sha}`")
+    lines.append("")
+lines += ["> Provenance note: a legacy-evidence release predates native RELEASE-METADATA.json and is not represented as if that metadata existed.",""]
+text="\n".join(lines)
+for forbidden in ["/kaggle/","/mnt/workspace/","source_handoff","source_checksums","source_metadata"]:
+    if forbidden in text:
+        raise SystemExit(f"public history leak: {forbidden}")
+out.parent.mkdir(parents=True,exist_ok=True)
+out.write_text(text)
+PY
+chmod 644 "$OUT"
+echo "PUBLIC_RELEASE_HISTORY=PASS path=$OUT"
