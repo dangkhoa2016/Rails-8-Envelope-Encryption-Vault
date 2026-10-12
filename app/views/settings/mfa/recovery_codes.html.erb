@@ -1,0 +1,9 @@
+<div class="mx-auto max-w-3xl">
+  <div class="rounded-3xl border border-amber-400/20 bg-amber-400/[0.06] p-6 sm:p-8">
+    <p class="text-xs font-semibold uppercase tracking-[0.14em] text-amber-300">One-time display</p>
+    <h1 class="mt-3 text-3xl font-semibold tracking-tight">Save recovery codes now</h1>
+    <p class="mt-3 text-sm leading-6 text-amber-100/70">These codes are shown only in this response. Store them offline before continuing.</p>
+    <pre class="mt-5 overflow-auto rounded-2xl border border-white/10 bg-slate-950 p-5 text-sm leading-7"><%= @recovery_codes.join("\n") %></pre>
+    <%= link_to "Done", settings_mfa_path, class: "mt-5 inline-flex rounded-xl bg-indigo-500 px-4 py-2.5 text-sm font-semibold" %>
+  </div>
+</div>
