@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+ENV_FILE="${ENV_FILE:-}"
+
+if [[ "${RAILS_ENV:-}" == "production" || -n "${PRODUCTION_ENV_FILE:-}" || -n "${OPS_ENV_FILE:-}" ]]; then
+  # Production selectors are authoritative even when activate-runtime used
+  # ENV_FILE=/dev/null to suppress development env loading.
+  # shellcheck disable=SC1091
+  source "$ROOT/script/lib/production-env.sh"
+  ENV_FILE="$(revault_production_env_path)"
+  revault_validate_production_env_path "$ROOT" "$ENV_FILE"
+elif [[ -z "$ENV_FILE" && -f "$ROOT/.env.kaggle" ]]; then
+  ENV_FILE="$ROOT/.env.kaggle"
+fi
+
+if [[ -n "$ENV_FILE" && -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+
+cd "$ROOT"
+
+set +e
+output="$(
+  RAILS_ENV="${RAILS_ENV:-development}" bin/rails runner '
+    result = KeyProviders::Diagnostics.call
+    puts "KEY_PROVIDER_NAME=#{result.provider_name}"
+    puts "KEY_PROVIDER_STATUS=#{result.status}"
+    puts "KEY_PROVIDER_CATEGORY=#{result.category}"
+    puts "KEY_PROVIDER_REMOTE=#{result.remote ? "yes" : "no"}"
+    exit(result.ready? ? 0 : 1)
+  ' 2>/dev/null
+)"
+status=$?
+set -e
+
+printf '%s\n' "$output"
+exit "$status"
