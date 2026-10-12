@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+SCREENSHOT_DIR="${DOC_SCREENSHOT_DIR:-}"
+python3 - "$ROOT" "$SCREENSHOT_DIR" <<'PYDOC'
+from pathlib import Path
+import re, sys
+root=Path(sys.argv[1]); shot_dir=Path(sys.argv[2]) if sys.argv[2] else None
+files=[root/'README.md']+sorted((root/'docs').glob('*.md'))
+errors=[]; checked=0
+for f in files:
+    text=f.read_text(errors='ignore')
+    for ref in re.findall(r'\[[^\]]*\]\(([^)]+)\)', text):
+        ref=ref.strip().split('#',1)[0]
+        if not ref or ref.startswith(('http://','https://','mailto:')): continue
+        checked += 1
+        if ref.startswith('screenshots/'):
+            if shot_dir is None:
+                continue
+            target=shot_dir/ref.split('/',1)[1]
+        else:
+            target=(root/ref).resolve() if f == root/'README.md' else (f.parent/ref).resolve()
+        if not target.exists(): errors.append(f'{f.relative_to(root)} -> {ref}')
+if errors:
+    print('DOC_LINK_CHECK=FAIL')
+    print('\n'.join(errors))
+    raise SystemExit(1)
+print(f'DOC_LINK_CHECK=PASS checked={checked}')
+PYDOC

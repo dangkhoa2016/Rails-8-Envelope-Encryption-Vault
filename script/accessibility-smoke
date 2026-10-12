@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+bin/rails test \
+  test/recovery_contract_test.rb \
+  test/system/accessibility_navigation_test.rb \
+  test/system/mobile_overflow_test.rb \
+  test/system/responsive_layout_test.rb \
+  test/system/production_ux_accessibility_test.rb
