@@ -1,0 +1,86 @@
+module Vault
+  class ListItems
+    Result = Data.define(:summaries, :page, :per_page, :total, :total_pages, :tags_by_item_id, :available_tags, :pagy)
+
+    MAX_CANDIDATES = 250
+    DEFAULT_PER_PAGE = 6
+    MAX_PER_PAGE = 100
+
+    def self.call(user:, q: nil, kind: nil, status: nil, favorite: nil, tag: nil, page: 1, per_page: DEFAULT_PER_PAGE, request: nil)
+      new(user:, q:, kind:, status:, favorite:, tag:, page:, per_page:, request:).call
+    end
+
+    def initialize(user:, q:, kind:, status:, favorite:, tag:, page:, per_page:, request:)
+      @user = user
+      @q = q.to_s.strip.first(200)
+      @kind = kind.to_s.presence_in(VaultItem::KINDS)
+      @status = status.to_s.presence_in(%w[active archived all]) || "all"
+      @favorite = ActiveModel::Type::Boolean.new.cast(favorite)
+      @tag = tag.to_s.strip.first(80)
+      @page = [ page.to_i, 1 ].max
+      @per_page = per_page.to_i.clamp(1, MAX_PER_PAGE)
+      @request = request
+    end
+
+    def call
+      decrypted = candidate_scope.map { |item| summary_for(item) }
+      available_tags = decrypted.flat_map { |_, _, tags| tags }.uniq.sort_by(&:downcase)
+      decrypted = decrypted.select { |_, title, _| title_matches?(title) } if q.present?
+      decrypted = decrypted.select { |_, _, tags| tag_matches?(tags) } if tag.present?
+
+      total = decrypted.length
+      total_pages = [ (total.to_f / per_page).ceil, 1 ].max
+      current_page = [ page, total_pages ].min
+      options = { count: total, page: current_page, limit: per_page }
+      if request
+        options[:request] = Pagy::Request.new(request: request)
+        # Never propagate a decrypted search title (or any injected query) into page URLs.
+        options[:querify] = ->(query_params) { query_params.delete_if { |key, _| key != "page" } }
+      end
+      pager = Pagy::Offset.new(**options)
+      paged = decrypted.slice(pager.offset, pager.limit) || []
+
+      Result.new(
+        summaries: paged.map { |item, title, _| [ item, title ] },
+        page: current_page,
+        per_page: per_page,
+        total: total,
+        total_pages: total_pages,
+        tags_by_item_id: paged.to_h { |item, _, tags| [ item.id, tags ] },
+        available_tags: available_tags,
+        pagy: pager
+      )
+    end
+
+    private
+
+    attr_reader :user, :q, :kind, :status, :favorite, :tag, :page, :per_page, :request
+
+    def candidate_scope
+      scope = user.vault_items.includes(:current_version).order(favorite: :desc, updated_at: :desc)
+      scope = scope.where(kind: kind) if kind
+      scope = scope.where(archived_at: nil) if status == "active"
+      scope = scope.where.not(archived_at: nil) if status == "archived"
+      scope = scope.where(favorite: true) if favorite
+      scope.limit(MAX_CANDIDATES)
+    end
+
+    def summary_for(item)
+      payload = Vault::RevealItem.call(user: user, item: item, audit: false)
+      tags = Array(payload["tags"]).filter_map { |value| value.to_s.strip.presence }.uniq.first(12)
+      [ item, payload["title"].presence || "Untitled", tags ]
+    rescue Crypto::Error, ArgumentError
+      [ item, "[Unable to decrypt]", [] ]
+    ensure
+      payload = nil
+    end
+
+    def title_matches?(title)
+      title.downcase.include?(q.downcase)
+    end
+
+    def tag_matches?(tags)
+      tags.any? { |candidate| candidate.casecmp?(tag) }
+    end
+  end
+end
