@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: script/prepare-production-database \
+  --archive /absolute/private-dr.tar.gz.age \
+  --outer-key /absolute/outer-recovery.agekey \
+  --provenance /absolute/provenance.json \
+  --aws-secret /absolute/aws.env \
+  [--evidence-dir /absolute/dir] [--replace]
+EOF
+  exit 64
+}
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+archive=""
+outer_key=""
+provenance=""
+aws_secret=""
+evidence_dir=""
+replace=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --archive) archive="${2:-}"; shift 2 ;;
+    --outer-key) outer_key="${2:-}"; shift 2 ;;
+    --provenance) provenance="${2:-}"; shift 2 ;;
+    --aws-secret) aws_secret="${2:-}"; shift 2 ;;
+    --evidence-dir) evidence_dir="${2:-}"; shift 2 ;;
+    --replace) replace=1; shift ;;
+    -h|--help) usage ;;
+    *) usage ;;
+  esac
+done
+
+for p in "$archive" "$outer_key" "$provenance" "$aws_secret"; do
+  [[ "$p" == /* && "$p" != "/" ]] || {
+    echo "PRODUCTION_DATABASE_PREPARE=FAIL reason=absolute-path-required" >&2
+    exit 2
+  }
+  [[ -f "$p" && -r "$p" ]] || {
+    echo "PRODUCTION_DATABASE_PREPARE=FAIL reason=missing-input" >&2
+    exit 2
+  }
+done
+
+export ENV_FILE=/dev/null
+# shellcheck disable=SC1091
+source "$ROOT/activate-runtime.sh" >/dev/null
+
+runtime_env="$ROOT/.env.kaggle"
+[[ -f "$runtime_env" && -r "$runtime_env" ]] || {
+  echo "PRODUCTION_DATABASE_PREPARE=FAIL reason=missing-runtime-env" >&2
+  exit 2
+}
+set -a
+# shellcheck disable=SC1090
+source "$runtime_env"
+set +a
+
+stable_db="$("$ROOT/script/production-database-name")"
+evidence_dir="${evidence_dir:-$ROOT/tmp/production-database-prepare}"
+[[ "$evidence_dir" == /* && "$evidence_dir" != "/" ]] || {
+  echo "PRODUCTION_DATABASE_PREPARE=FAIL reason=evidence-dir-absolute-path-required" >&2
+  exit 2
+}
+mkdir -p "$evidence_dir"
+
+pg_bindir="$(pg_config --bindir)"
+pg_socket="${RUNTIME_ROOT:?RUNTIME_ROOT must be set by activate-runtime}/postgres/socket"
+pg_port="${PG_PORT:-5432}"
+
+exists="$("$pg_bindir/psql" -h "$pg_socket" -p "$pg_port" -U postgres -d postgres -Atqc "select 1 from pg_database where datname='$stable_db'")"
+if [[ "$exists" == "1" ]]; then
+  if [[ "$replace" != "1" ]]; then
+    echo "PRODUCTION_DATABASE_PREPARE=FAIL reason=stable-database-already-exists database_name=$stable_db" >&2
+    exit 2
+  fi
+  "$pg_bindir/dropdb" -h "$pg_socket" -p "$pg_port" -U postgres --if-exists --force "$stable_db"
+  echo "PRODUCTION_DATABASE_REPLACE=PASS database_name=$stable_db"
+fi
+
+acceptance="$evidence_dir/PRODUCTION-DATABASE-RESTORE-ACCEPTANCE.json"
+provenance_evidence="$evidence_dir/PRODUCTION-DATABASE-PROVENANCE.json"
+summary="$evidence_dir/PRODUCTION-DATABASE-PREPARE.json"
+prepared=0
+complete=0
+
+cleanup() {
+  rc=$?
+  set +e
+  if [[ "$prepared" == "1" && "$complete" != "1" ]]; then
+    "$pg_bindir/dropdb" -h "$pg_socket" -p "$pg_port" -U postgres --if-exists --force "$stable_db" >/dev/null 2>&1 || true
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT
+
+PRIVATE_DR_RUNTIME_ENV_FILE="$runtime_env" \
+"$ROOT/script/private-dr-restore-acceptance" \
+  --archive "$archive" \
+  --outer-key "$outer_key" \
+  --aws-secret "$aws_secret" \
+  --database-name "$stable_db" \
+  --evidence "$acceptance" \
+  --keep-db
+prepared=1
+
+"$ROOT/script/private-dr-provenance-preflight" \
+  --archive "$archive" \
+  --provenance "$provenance" \
+  --acceptance "$acceptance" \
+  --evidence "$provenance_evidence"
+
+VERSION="$(tr -d '\r\n' < "$ROOT/VERSION")" STABLE_DB="$stable_db" ACCEPTANCE="$acceptance" PROVENANCE_EVIDENCE="$provenance_evidence" SUMMARY="$summary" python3 <<'PY'
+import hashlib
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+stable = os.environ["STABLE_DB"]
+acceptance_path = Path(os.environ["ACCEPTANCE"])
+provenance_path = Path(os.environ["PROVENANCE_EVIDENCE"])
+summary_path = Path(os.environ["SUMMARY"])
+
+acceptance = json.loads(acceptance_path.read_text())
+provenance = json.loads(provenance_path.read_text())
+
+if acceptance.get("database_name") != stable:
+    raise SystemExit("PRODUCTION_DATABASE_PREPARE=FAIL reason=acceptance-database-name-mismatch")
+if acceptance.get("database_kept") is not True:
+    raise SystemExit("PRODUCTION_DATABASE_PREPARE=FAIL reason=acceptance-database-not-kept")
+if provenance.get("status") != "pass":
+    raise SystemExit("PRODUCTION_DATABASE_PREPARE=FAIL reason=provenance-not-pass")
+if provenance.get("database_counts") != acceptance.get("database_counts"):
+    raise SystemExit("PRODUCTION_DATABASE_PREPARE=FAIL reason=provenance-counts-mismatch")
+
+data = {
+    "schema_version": 1,
+    "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "status": "pass",
+    "release_version": os.environ["VERSION"],
+    "database_name": stable,
+    "stable_name_contract": True,
+    "database_counts": acceptance["database_counts"],
+    "historical_decrypt": acceptance["historical_decrypt"],
+    "http_up": acceptance["http_up"],
+    "http_ready": acceptance["http_ready"],
+    "private_dr_artifact": acceptance["artifact"],
+    "private_dr_provenance": "pass",
+    "acceptance_sha256": hashlib.sha256(acceptance_path.read_bytes()).hexdigest(),
+    "provenance_sha256": hashlib.sha256(provenance_path.read_bytes()).hexdigest(),
+    "database_url_recorded": False,
+    "credential_values_recorded": False,
+    "key_ids_recorded": False,
+    "plaintext_recorded": False,
+}
+summary_path.write_text(json.dumps(data, sort_keys=True, indent=2) + "\n")
+summary_path.chmod(0o644)
+PY
+
+complete=1
+echo "PRODUCTION_DATABASE_PREPARE=PASS database_name=$stable_db"
+echo "PRODUCTION_DATABASE_PREPARE_EVIDENCE=PASS path=$summary"
