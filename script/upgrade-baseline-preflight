@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+BASE_ROOT="${UPGRADE_BASE_ROOT:-}"
+EXPECTED_BASE_VERSION="0.1.2-FIX46"
+OUT="${UPGRADE_PREFLIGHT_EVIDENCE_OUT:-$ROOT/tmp/release-artifacts/UPGRADE-FROM-FIX46-PREFLIGHT.json}"
+LOG="${UPGRADE_PREFLIGHT_LOG_OUT:-$ROOT/tmp/release-artifacts/UPGRADE-FROM-FIX46-PREFLIGHT.log}"
+VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
+BASE_VERSION="$EXPECTED_BASE_VERSION"
+if [[ -n "$BASE_ROOT" ]]; then
+  [[ -f "$BASE_ROOT/VERSION" ]] || { echo "upgrade base VERSION missing: $BASE_ROOT" >&2; exit 1; }
+  BASE_VERSION="$(tr -d '[:space:]' < "$BASE_ROOT/VERSION")"
+  [[ "$BASE_VERSION" == "$EXPECTED_BASE_VERSION" ]] || { echo "unexpected base version: $BASE_VERSION" >&2; exit 1; }
+fi
+mkdir -p "$(dirname "$OUT")" "$(dirname "$LOG")"
+cd "$ROOT"
+source ./activate-kaggle.sh >/dev/null
+if [[ -n "$BASE_ROOT" ]]; then
+  base_migrations="$(find "$BASE_ROOT/db/migrate" -maxdepth 1 -type f -printf '%f\n' | sort)"
+else
+  base_migrations="$(cat <<'EOF'
+20260927000100_enable_pgcrypto.rb
+20260927000200_create_users_and_sessions.rb
+20260927000300_create_vault_items.rb
+20260927000400_create_vault_item_versions.rb
+20260927000500_add_current_version_to_vault_items.rb
+20260927000600_create_key_registries.rb
+20260927000700_create_audit_events.rb
+20260927000800_harden_sessions.rb
+20260927000900_create_mfa_security.rb
+20260927001000_add_vault_version_integrity_constraints.rb
+20260927001100_harden_current_version_foreign_key.rb
+20260927001200_create_solid_cache_entries.rb
+20260927001300_add_totp_replay_protection.rb
+EOF
+)"
+fi
+rc_migrations="$(find "$ROOT/db/migrate" -maxdepth 1 -type f -printf '%f\n' | sort)"
+[[ "$base_migrations" == "$rc_migrations" ]] || { echo "migration set differs from FIX46" >&2; exit 1; }
+schema_before="$(RAILS_ENV=production bin/rails runner 'puts ActiveRecord::Base.connection.select_value("SELECT max(version) FROM schema_migrations")')"
+count_before="$(RAILS_ENV=production bin/rails runner 'puts ActiveRecord::Base.connection.select_value("SELECT count(*) FROM schema_migrations")')"
+RAILS_ENV=production bin/rails db:migrate >/dev/null
+schema_after="$(RAILS_ENV=production bin/rails runner 'puts ActiveRecord::Base.connection.select_value("SELECT max(version) FROM schema_migrations")')"
+count_after="$(RAILS_ENV=production bin/rails runner 'puts ActiveRecord::Base.connection.select_value("SELECT count(*) FROM schema_migrations")')"
+[[ "$schema_before" == "$schema_after" ]] || { echo "schema migration head changed" >&2; exit 1; }
+[[ "$count_before" == "$count_after" ]] || { echo "schema migration count changed" >&2; exit 1; }
+pending="$(RAILS_ENV=production bin/rails runner 'ctx=ActiveRecord::Base.connection_pool.migration_context; puts ctx.needs_migration? ? "yes" : "no"')"
+[[ "$pending" == "no" ]] || { echo "pending migrations remain" >&2; exit 1; }
+./script/project-doctor >/dev/null
+
+BASE_VERSION="$BASE_VERSION" VERSION="$VERSION" SCHEMA="$schema_after" COUNT="$count_after" python3 - "$OUT" "$LOG" <<'PY'
+import json,os,sys
+from datetime import datetime,timezone
+from pathlib import Path
+out,log=map(Path,sys.argv[1:3])
+data={
+ "schema_version":1,
+ "release_version":os.environ["VERSION"],
+ "upgrade_base_version":os.environ["BASE_VERSION"],
+ "generated_at":datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+ "status":"pass",
+ "migration_set_identical_to_base":True,
+ "schema_migration_head":os.environ["SCHEMA"],
+ "schema_migration_count":int(os.environ["COUNT"]),
+ "db_migrate_idempotent":True,
+ "pending_migrations":False,
+ "persistent_database_reused":True,
+ "project_doctor":"pass",
+ "contains_secret_values":False,
+}
+out.write_text(json.dumps(data,sort_keys=True,indent=2)+"\n"); out.chmod(0o644)
+log.write_text(
+ f"release_version={data['release_version']}\n"
+ f"upgrade_base_version={data['upgrade_base_version']}\n"
+ "UPGRADE_FROM_FIX46_PREFLIGHT=PASS\n"
+ "migration_set_identical=PASS\n"
+ "db_migrate_idempotent=PASS\n"
+ "pending_migrations=NO\n"
+ "persistent_database_reused=YES\n"
+ "PROJECT_DOCTOR=PASS\n"
+ "evidence_contains_secret_values=NO\n"
+); log.chmod(0o644)
+PY
+echo "UPGRADE_FROM_FIX46_PREFLIGHT=PASS evidence=$OUT"
+echo "UPGRADE_PREFLIGHT_SECRET_VALUES=ABSENT"

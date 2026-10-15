@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -u
+cd "$(dirname "$0")/.."
+status=0
+check() { printf '%-30s %s\n' "$1" "$2"; }
+
+required_ruby="$(cat .ruby-version)"
+if command -v ruby >/dev/null 2>&1; then
+  actual="$(ruby -e 'print RUBY_VERSION')"
+  check ruby "$(ruby -v)"
+  [ "$actual" = "$required_ruby" ] || { check ruby_requirement "EXPECTED $required_ruby"; status=1; }
+else check ruby MISSING; status=1; fi
+
+if command -v mise >/dev/null 2>&1; then check mise "$(mise --version 2>/dev/null | head -1)"; else check mise "not in PATH (okay outside Kaggle bootstrap shell)"; fi
+if command -v bundle >/dev/null 2>&1; then check bundler "$(bundle -v)"; else check bundler MISSING; status=1; fi
+if command -v psql >/dev/null 2>&1; then check psql "$(psql --version)"; else check psql MISSING; status=1; fi
+if command -v redis-server >/dev/null 2>&1; then check redis_server "$(redis-server --version | head -1)"; else check redis_server MISSING; status=1; fi
+[ -f Gemfile.lock ] && check gemfile_lock PRESENT || { check gemfile_lock MISSING; status=1; }
+
+if [ -n "${DATABASE_URL:-}" ] && command -v psql >/dev/null 2>&1; then
+  if psql "$DATABASE_URL" -Atqc 'SELECT 1' 2>/dev/null | grep -q '^1$'; then
+    check database_connection PASS
+  else
+    check database_connection FAIL
+    status=1
+  fi
+else
+  check database_connection "SKIP (DATABASE_URL unset)"
+fi
+
+if [ -n "${REDIS_URL:-}" ] && command -v redis-cli >/dev/null 2>&1; then
+  # Parse the generated bootstrap URL without printing the password.
+  redis_host="$(python3 - "$REDIS_URL" <<'PY'
+import sys, urllib.parse
+u=urllib.parse.urlparse(sys.argv[1]); print(u.hostname or '127.0.0.1')
+PY
+)"
+  redis_port="$(python3 - "$REDIS_URL" <<'PY'
+import sys, urllib.parse
+u=urllib.parse.urlparse(sys.argv[1]); print(u.port or 6379)
+PY
+)"
+  redis_pass="$(python3 - "$REDIS_URL" <<'PY'
+import sys, urllib.parse
+u=urllib.parse.urlparse(sys.argv[1]); print(urllib.parse.unquote(u.password or ''))
+PY
+)"
+  if REDISCLI_AUTH="$redis_pass" redis-cli -h "$redis_host" -p "$redis_port" PING 2>/dev/null | grep -q PONG; then
+    check redis_connection PASS
+  else
+    check redis_connection FAIL
+    status=1
+  fi
+  unset redis_pass
+else
+  check redis_connection "SKIP (REDIS_URL unset)"
+fi
+
+key_dir="${VAULT_KEK_DIR:-$PWD/.local/keks}"
+key_id="${VAULT_ACTIVE_KEK_ID:-kek-dev-01}"
+key="$key_dir/$key_id.key"
+if [ -f "$key" ]; then
+  size="$(wc -c < "$key" | tr -d ' ')"
+  mode="$(stat -c '%a' "$key" 2>/dev/null || stat -f '%Lp' "$key")"
+  check vault_kek "$key ($size bytes mode=$mode)"
+  [ "$size" = 32 ] || status=1
+else
+  check vault_kek "MISSING: $key"
+  status=1
+fi
+
+if ./script/crypto-self-test >/tmp/revault-crypto-test.log 2>&1; then check crypto_self_test PASS; else check crypto_self_test FAIL; cat /tmp/revault-crypto-test.log; status=1; fi
+if ./script/security-self-test >/tmp/revault-security-test.log 2>&1; then check security_self_test PASS; else check security_self_test FAIL; cat /tmp/revault-security-test.log; status=1; fi
+rm -f /tmp/revault-crypto-test.log /tmp/revault-security-test.log
+exit "$status"
