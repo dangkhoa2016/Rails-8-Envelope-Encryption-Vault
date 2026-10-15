@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage(){ echo "usage: $0 SOURCE_DIR ENV_FILE RCLONE_CONF AGE_IDENTITY KEK_FILE OUTPUT_TAR_GZ" >&2; exit 64; }
+[ "$#" -eq 6 ] || usage
+
+src="$1"; env_file="$2"; rclone_conf="$3"; age_identity="$4"; kek_file="$5"; out="$6"
+for p in "$src" "$env_file" "$rclone_conf" "$age_identity" "$kek_file"; do
+  [ -e "$p" ] || { echo "ERROR missing: $p" >&2; exit 1; }
+done
+
+version="$(tr -d '[:space:]' < "$src/VERSION")"
+release_name="$(printf '%s' "$version" | sed 's/.*-//')"
+bundle="ruby-envelope-vault-v"$version"-MIGRATION-BUNDLE"
+stage="$(mktemp -d)"
+verify=""
+cleanup(){ rm -rf "$stage" ${verify:+"$verify"}; }
+trap cleanup EXIT
+
+mkdir -p "$stage/$bundle/source" "$stage/$bundle/secrets/env" "$stage/$bundle/secrets/rclone" "$stage/$bundle/secrets/age" "$stage/$bundle/secrets/keks"
+
+tar -C "$src" \
+  --exclude=.git --exclude=.bundle --exclude=.env --exclude=.env.* --exclude=.fix\* \
+  --exclude=tmp --exclude=log --exclude=storage --exclude=vendor/bundle --exclude=public/assets --exclude=public/assets-dev \
+  --exclude=\*.key --exclude=\*.pem --exclude=\*.agekey \
+  -cf - . | tar -C "$stage/$bundle/source" -xf -
+
+find "$stage/$bundle/source/script" -maxdepth 1 -type f -exec chmod 755 {} +
+chmod 755 "$stage/$bundle/source/bin/"* 2>/dev/null || true
+
+install -m 600 "$env_file" "$stage/$bundle/secrets/env/.env.kaggle"
+install -m 600 "$rclone_conf" "$stage/$bundle/secrets/rclone/rclone.conf"
+install -m 600 "$age_identity" "$stage/$bundle/secrets/age/recovery.agekey"
+install -m 600 "$kek_file" "$stage/$bundle/secrets/keks/$(basename "$kek_file")"
+
+cat > "$stage/$bundle/RESTORE-ON-NEW-LINUX.md" <<'EOF'
+# Rails 8 Envelope Encryption Vault __VERSION__ migration bundle
+
+This archive intentionally contains live recovery secrets. Keep the archive mode 0600 and protect it as a recovery artifact.
+
+__RELEASE__ portability and DR hardening:
+- runtime-only .bundle/config is excluded from the archive;
+- operational scripts are normalized executable;
+- DR supports explicit/automatic local-postgres peer-auth orchestration;
+- local DR drops restore/decrypt work to the configured app OS user;
+- scheduled DR may run with privileged orchestration while restoring shared ops ownership;
+- OPS_POSTGRES_BIN pins compatible PostgreSQL client tooling;
+- scheduler installation preserves an existing current-release symlink;
+- PostgreSQL 17 recovery tooling is known-good for the current acceptance backups.
+
+After extraction, run restore-to-linux.sh as root and review /etc/ruby-envelope-vault/ops.env. Then run the scheduler doctor. On a true systemd host, use script/live-host-acceptance pre-reboot, reboot, and finish with script/live-host-acceptance post-reboot before declaring final live-host acceptance.
+EOF
+
+cat > "$stage/$bundle/restore-to-linux.sh" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+here="$(cd "$(dirname "$0")" && pwd -P)"
+[ "$(id -u)" -eq 0 ] || { echo "ERROR run as root" >&2; exit 1; }
+install_root="${INSTALL_ROOT:-/opt/ruby-envelope-vault}"
+secret_root="${SECRET_ROOT:-/etc/ruby-envelope-vault}"
+release="$install_root/__RELEASE__"
+mkdir -p "$secret_root/keks"
+chmod 700 "$secret_root" "$secret_root/keks"
+rm -rf "$release"
+mkdir -p "$release"
+tar -C "$here/source" -cf - . | tar -C "$release" -xf -
+find "$release/script" -maxdepth 1 -type f -exec chmod 755 {} +
+chmod 755 "$release/bin/"* 2>/dev/null || true
+rm -rf "$release/.bundle"
+ln -sfn "$release" "$install_root/current"
+install -m 600 "$here/secrets/age/recovery.agekey" "$secret_root/recovery.agekey"
+install -m 600 "$here/secrets/rclone/rclone.conf" "$secret_root/rclone.conf"
+for f in "$here"/secrets/keks/*; do install -m 600 "$f" "$secret_root/keks/$(basename "$f")"; done
+if [ ! -f "$secret_root/ops.env" ]; then install -m 600 "$install_root/current/ops/ops.env.example" "$secret_root/ops.env"; fi
+install -m 600 "$here/secrets/env/.env.kaggle" "$secret_root/source-env.kaggle"
+echo "PASS restored __RELEASE__ source and secret material"
+echo "Next: review $secret_root/ops.env and run $install_root/current/script/ops-scheduler-doctor systemd"
+EOF
+sed -i "s/__VERSION__/$version/g; s/__RELEASE__/$release_name/g" \
+  "$stage/$bundle/RESTORE-ON-NEW-LINUX.md" \
+  "$stage/$bundle/restore-to-linux.sh"
+chmod 700 "$stage/$bundle/restore-to-linux.sh"
+
+( cd "$stage/$bundle" && find source secrets -type f -print0 | sort -z | xargs -0 sha256sum > MANIFEST-SHA256.txt )
+chmod 600 "$stage/$bundle/MANIFEST-SHA256.txt" "$stage/$bundle/RESTORE-ON-NEW-LINUX.md"
+chmod -R go-rwx "$stage/$bundle/secrets"
+
+mkdir -p "$(dirname "$out")"
+rm -f "$out" "$out.sha256"
+tar -C "$stage" -czf "$out" "$bundle"
+chmod 600 "$out"
+( cd "$(dirname "$out")" && sha256sum "$(basename "$out")" > "$(basename "$out").sha256" )
+chmod 600 "$out.sha256"
+
+verify="$(mktemp -d)"
+( cd "$(dirname "$out")" && sha256sum -c "$(basename "$out.sha256")" >/dev/null )
+tar -C "$verify" -xzf "$out"
+(cd "$verify/$bundle" && sha256sum -c MANIFEST-SHA256.txt >/dev/null)
+test ! -e "$verify/$bundle/source/.bundle/config"
+find "$verify/$bundle/source/script" -maxdepth 1 -type f ! -perm -u=x -print | grep -q . && { echo "ERROR non-executable operational script in bundle" >&2; exit 1; } || true
+grep -Fq 'DR_LOCAL_PG_SOCKET:-/var/run/postgresql' "$verify/$bundle/source/script/dr-rehearsal"
+
+echo "BUNDLE_SIDECAR_VERIFY=PASS"
+echo "BUNDLE_INTERNAL_VERIFY=PASS"
+echo "BUNDLE_PORTABILITY_VERIFY=PASS"
+stat -c "%a %s %n" "$out" "$out.sha256"
+sha256sum "$out"
