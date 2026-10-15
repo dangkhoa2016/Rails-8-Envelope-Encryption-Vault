@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+: "${DATABASE_URL:?DATABASE_URL is required}"
+OUT_DIR="${BACKUP_DIR:-./backups}"
+mkdir -p "$OUT_DIR"
+chmod 700 "$OUT_DIR"
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+base="$OUT_DIR/ruby-envelope-vault-$stamp.dump"
+
+if [ -n "${BACKUP_AGE_RECIPIENT:-}" ]; then
+  command -v age >/dev/null || { echo "age is required when BACKUP_AGE_RECIPIENT is set" >&2; exit 1; }
+  out="$base.age"
+  pg_dump --format=custom --no-owner --no-acl --dbname="$DATABASE_URL" | age -r "$BACKUP_AGE_RECIPIENT" -o "$out"
+  echo "Encrypted backup created with age recipient; no plaintext dump was intentionally persisted."
+else
+  if [ "${ALLOW_PLAINTEXT_BACKUP:-0}" != "1" ]; then
+    echo "ERROR: BACKUP_AGE_RECIPIENT is unset." >&2
+    echo "Refusing to create a plaintext database backup by default." >&2
+    echo "Set BACKUP_AGE_RECIPIENT for the recommended encrypted backup, or explicitly set ALLOW_PLAINTEXT_BACKUP=1." >&2
+    exit 1
+  fi
+  out="$base"
+  echo "WARNING: explicit plaintext-backup override accepted. Protect this artifact carefully." >&2
+  pg_dump --format=custom --no-owner --no-acl --dbname="$DATABASE_URL" --file="$out"
+fi
+
+out_dir="$(dirname "$out")"
+out_base="$(basename "$out")"
+(cd "$out_dir" && sha256sum "$out_base" > "$out_base.sha256")
+chmod 600 "$out" "$out.sha256"
+echo "Backup: $out"
+echo "Checksum: $out.sha256"
+echo "NOTE: Vault KEKs are intentionally NOT included. Back them up separately."
