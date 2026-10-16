@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+OUT="${SESSION_LIFECYCLE_EVIDENCE_OUT:-$ROOT/tmp/release-artifacts/SESSION-LIFECYCLE-PREFLIGHT.json}"
+LOG="${SESSION_LIFECYCLE_LOG_OUT:-$ROOT/tmp/release-artifacts/SESSION-LIFECYCLE-PREFLIGHT.log}"
+VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
+tmp="$(mktemp -d)"
+server_pid=""
+email="fix46-session-${RANDOM}-${RANDOM}@example.invalid"
+password="FIX46_SESSION_PASSWORD_CANARY_9f31"
+
+cleanup() {
+  if [[ -n "$server_pid" ]]; then
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+  fi
+  cd "$ROOT" 2>/dev/null || true
+  source ./activate-kaggle.sh >/dev/null 2>&1 || true
+  PREFLIGHT_EMAIL="$email" RAILS_ENV=production bin/rails runner 'u=User.find_by(email_address: ENV["PREFLIGHT_EMAIL"]); u&.destroy!' >/dev/null 2>&1 || true
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+
+port="$(python3 - <<'PY'
+import socket
+for p in range(3700,3800):
+ s=socket.socket()
+ try:s.bind(("127.0.0.1",p))
+ except OSError:s.close();continue
+ s.close();print(p);break
+PY
+)"
+base="http://127.0.0.1:$port"
+mkdir -p "$(dirname "$OUT")" "$(dirname "$LOG")"
+cd "$ROOT"
+source ./activate-kaggle.sh >/dev/null
+
+PREFLIGHT_EMAIL="$email" PREFLIGHT_PASSWORD="$password" RAILS_ENV=production bin/rails runner '
+u=User.find_or_initialize_by(email_address: ENV.fetch("PREFLIGHT_EMAIL"))
+u.password=ENV.fetch("PREFLIGHT_PASSWORD")
+u.password_confirmation=ENV.fetch("PREFLIGHT_PASSWORD")
+u.save!
+' >/dev/null
+RAILS_ENV=production bin/rails runner 'Rack::Attack.cache.store.clear' >/dev/null
+
+APP_HOSTS=127.0.0.1,localhost DEMO_MODE=true FORCE_SSL=false ASSUME_SSL=false REQUIRE_MFA=false RAILS_ENV=production PORT="$port" bin/rails server -b 127.0.0.1 -p "$port" >"$tmp/server.log" 2>&1 &
+server_pid=$!
+for _ in $(seq 1 40); do
+  curl -fsS -o /dev/null "$base/up" && break
+  kill -0 "$server_pid" 2>/dev/null || { tail -n 80 "$tmp/server.log" >&2; exit 1; }
+  sleep .5
+done
+
+csrf_from() {
+  python3 - "$1" <<'PY'
+import html,re,sys
+t=open(sys.argv[1],encoding="utf-8").read()
+m=re.search(r'<meta[^>]+name=["\x27]csrf-token["\x27][^>]+content=["\x27]([^"\x27]+)',t)
+if not m: raise SystemExit("CSRF token missing")
+print(html.unescape(m.group(1)))
+PY
+}
+
+clear_rate_limit(){ RAILS_ENV=production bin/rails runner 'Rack::Attack.cache.store.clear' >/dev/null; }
+
+server_session_id() {
+  PREFLIGHT_EMAIL="$email" RAILS_ENV=production bin/rails runner 'u=User.find_by!(email_address: ENV.fetch("PREFLIGHT_EMAIL")); puts u.sessions.order(:created_at).last.id'
+}
+
+login() {
+  local jar="$1" headers="$2"
+  clear_rate_limit
+  curl -sS -c "$jar" "$base/session/new" >"$tmp/login.html"
+  local token
+  token="$(csrf_from "$tmp/login.html")"
+  curl -sS -D "$headers" -o /dev/null -w "%{http_code}" -b "$jar" -c "$jar" -H "Origin: $base"     --data-urlencode "email_address=$email" --data-urlencode "password=$password"     --data-urlencode "authenticity_token=$token" "$base/session"
+}
+
+assert_redirect() {
+  [[ "$1" == "302" || "$1" == "303" ]] || { echo "expected redirect, got $1" >&2; exit 1; }
+}
+
+login_status="$(login "$tmp/main.jar" "$tmp/login.headers")"
+assert_redirect "$login_status"
+first_session="$(server_session_id)"
+cp "$tmp/main.jar" "$tmp/stale.jar"
+PREFLIGHT_SESSION_ID="$first_session" RAILS_ENV=production bin/rails runner '
+s=Session.find(ENV.fetch("PREFLIGHT_SESSION_ID")); raise unless s.absolute_expires_at && s.active?
+' >/dev/null
+python3 - "$tmp/login.headers" <<'PY'
+import sys
+h=open(sys.argv[1],errors="replace").read().lower()
+lines=[x for x in h.splitlines() if x.startswith("set-cookie:") and "session_id=" in x]
+if not lines: raise SystemExit("session_id Set-Cookie missing")
+v="\n".join(lines)
+for token in ("httponly","samesite=strict","expires="):
+ if token not in v: raise SystemExit(f"session cookie attribute missing: {token}")
+PY
+
+curl -sS -b "$tmp/main.jar" -c "$tmp/main.jar" "$base/reauthentication/new" >"$tmp/reauth.html"
+reauth_token="$(csrf_from "$tmp/reauth.html")"
+reauth_status="$(curl -sS -o /dev/null -w "%{http_code}" -b "$tmp/main.jar" -c "$tmp/main.jar" -H "Origin: $base"   --data-urlencode "password=$password" --data-urlencode "authenticity_token=$reauth_token" "$base/reauthentication")"
+assert_redirect "$reauth_status"
+second_session="$(server_session_id)"
+[[ "$first_session" != "$second_session" ]] || { echo "session did not rotate" >&2; exit 1; }
+PREFLIGHT_OLD="$first_session" PREFLIGHT_NEW="$second_session" RAILS_ENV=production bin/rails runner '
+old=Session.find(ENV.fetch("PREFLIGHT_OLD")); new=Session.find(ENV.fetch("PREFLIGHT_NEW"))
+raise unless old.revoked_at && new.active?
+' >/dev/null
+
+stale_status="$(curl -sS -o /dev/null -w "%{http_code}" -b "$tmp/stale.jar" -c "$tmp/stale.jar" "$base/settings/sessions")"
+assert_redirect "$stale_status"
+other_session="$(PREFLIGHT_EMAIL="$email" RAILS_ENV=production bin/rails runner '
+u=User.find_by!(email_address: ENV.fetch("PREFLIGHT_EMAIL"))
+now=Time.current
+s=u.sessions.create!(user_agent:"FIX46-other",ip_address:"198.51.100.77",last_seen_at:now,absolute_expires_at:now+1.hour,reauthenticated_at:now)
+puts s.id
+')"
+curl -sS -b "$tmp/main.jar" -c "$tmp/main.jar" "$base/settings/sessions" >"$tmp/sessions.html"
+sessions_token="$(csrf_from "$tmp/sessions.html")"
+other_status="$(curl -sS -o /dev/null -w "%{http_code}" -X DELETE -b "$tmp/main.jar" -c "$tmp/main.jar" -H "Origin: $base"   --data-urlencode "authenticity_token=$sessions_token" "$base/settings/sessions/$other_session")"
+assert_redirect "$other_status"
+PREFLIGHT_OTHER="$other_session" PREFLIGHT_CURRENT="$second_session" RAILS_ENV=production bin/rails runner '
+other=Session.find(ENV.fetch("PREFLIGHT_OTHER"))
+current=Session.find(ENV.fetch("PREFLIGHT_CURRENT"))
+raise unless other.revoked_at && current.active?
+' >/dev/null
+
+login "$tmp/idle.jar" "$tmp/idle-login.headers" >/dev/null
+idle_session="$(server_session_id)"
+PREFLIGHT_SESSION_ID="$idle_session" RAILS_ENV=production bin/rails runner '
+s=Session.find(ENV.fetch("PREFLIGHT_SESSION_ID"))
+s.update_columns(last_seen_at: Time.current - Rails.configuration.x.security.session_idle_timeout - 1.minute)
+' >/dev/null
+idle_status="$(curl -sS -o /dev/null -w "%{http_code}" -b "$tmp/idle.jar" -c "$tmp/idle.jar" "$base/settings/sessions")"
+assert_redirect "$idle_status"
+PREFLIGHT_SESSION_ID="$idle_session" RAILS_ENV=production bin/rails runner '
+raise unless Session.find(ENV.fetch("PREFLIGHT_SESSION_ID")).revoked_at
+' >/dev/null
+
+login "$tmp/absolute.jar" "$tmp/absolute-login.headers" >/dev/null
+absolute_session="$(server_session_id)"
+PREFLIGHT_SESSION_ID="$absolute_session" RAILS_ENV=production bin/rails runner '
+s=Session.find(ENV.fetch("PREFLIGHT_SESSION_ID"))
+s.update_columns(last_seen_at: Time.current, absolute_expires_at: 1.minute.ago)
+' >/dev/null
+absolute_status="$(curl -sS -o /dev/null -w "%{http_code}" -b "$tmp/absolute.jar" -c "$tmp/absolute.jar" "$base/settings/sessions")"
+assert_redirect "$absolute_status"
+PREFLIGHT_SESSION_ID="$absolute_session" RAILS_ENV=production bin/rails runner '
+raise unless Session.find(ENV.fetch("PREFLIGHT_SESSION_ID")).revoked_at
+' >/dev/null
+
+login "$tmp/current.jar" "$tmp/current-login.headers" >/dev/null
+current_session="$(server_session_id)"
+curl -sS -b "$tmp/current.jar" -c "$tmp/current.jar" "$base/settings/sessions" >"$tmp/current.html"
+current_token="$(csrf_from "$tmp/current.html")"
+current_status="$(curl -sS -o /dev/null -w "%{http_code}" -X DELETE -b "$tmp/current.jar" -c "$tmp/current.jar" -H "Origin: $base"   --data-urlencode "authenticity_token=$current_token" "$base/settings/sessions/$current_session")"
+assert_redirect "$current_status"
+PREFLIGHT_SESSION_ID="$current_session" RAILS_ENV=production bin/rails runner '
+raise unless Session.find(ENV.fetch("PREFLIGHT_SESSION_ID")).revoked_at
+' >/dev/null
+post_revoke_status="$(curl -sS -o /dev/null -w "%{http_code}" -b "$tmp/current.jar" -c "$tmp/current.jar" "$base/settings/sessions")"
+assert_redirect "$post_revoke_status"
+
+VERSION="$VERSION" python3 - "$tmp" "$OUT" "$LOG" <<'PY'
+import json,sys,os
+from datetime import datetime,timezone
+from pathlib import Path
+tmp,out,log=map(Path,sys.argv[1:4])
+server=(tmp/"server.log").read_text(errors="replace")
+if "FIX46_SESSION_PASSWORD_CANARY_9f31" in server:
+    raise SystemExit("session preflight canary leaked")
+data={
+ "schema_version":1,
+ "release_version":os.environ["VERSION"],
+ "generated_at":datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+ "status":"pass",
+ "login_creates_active_server_session":True,
+ "session_cookie_httponly":True,
+ "session_cookie_same_site_strict":True,
+ "session_cookie_has_expiry":True,
+ "reauthentication_rotates_session":True,
+ "pre_rotation_cookie_rejected":True,
+ "other_session_revocation":True,
+ "current_session_revocation_signs_out":True,
+ "idle_timeout_rejected_and_revoked":True,
+ "absolute_timeout_rejected_and_revoked":True,
+ "plaintext_canary_values_exposed":False,
+ "contains_secret_values":False,
+}
+out.write_text(json.dumps(data,sort_keys=True,indent=2)+"\n")
+out.chmod(0o644)
+log.write_text(
+ "SESSION_LIFECYCLE_PREFLIGHT=PASS\n"
+ "login_session_creation=PASS\n"
+ "session_cookie_attributes=PASS\n"
+ "reauth_session_rotation=PASS\n"
+ "stale_cookie_rejection=PASS\n"
+ "other_session_revocation=PASS\n"
+ "current_session_revocation=PASS\n"
+ "idle_timeout_rejection=PASS\n"
+ "absolute_timeout_rejection=PASS\n"
+ "plaintext_canary_values_exposed=NO\n"
+ "evidence_contains_secret_values=NO\n"
+)
+log.chmod(0o644)
+PY
+echo "SESSION_LIFECYCLE_PREFLIGHT=PASS evidence=$OUT"
+echo "SESSION_LIFECYCLE_SECRET_VALUES=ABSENT"

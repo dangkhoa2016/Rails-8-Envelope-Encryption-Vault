@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+: "${DATABASE_URL:?DATABASE_URL is required}"
+: "${CANARY_SECRET:?CANARY_SECRET is required; use fake test data only}"
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+pg_dump "$DATABASE_URL" > "$tmp"
+if grep -a -F -- "$CANARY_SECRET" "$tmp" >/dev/null; then
+  echo "FAIL: canary plaintext was found in the database dump" >&2
+  exit 1
+fi
+echo "PASS: canary plaintext was not found in the database dump"
