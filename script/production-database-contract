@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+EVIDENCE_OUT="${PRODUCTION_DATABASE_EVIDENCE_OUT:-}"
+
+export ENV_FILE=/dev/null
+# shellcheck disable=SC1091
+source "$ROOT/activate-runtime.sh" >/dev/null
+# shellcheck disable=SC1091
+source "$ROOT/script/lib/production-env.sh"
+revault_load_production_env "$ROOT"
+
+: "${DATABASE_URL:?DATABASE_URL is required by production env}"
+
+expected="$("$ROOT/script/production-database-name")"
+actual="$(python3 - "$DATABASE_URL" <<'PY'
+import sys
+from urllib.parse import urlsplit
+u=urlsplit(sys.argv[1])
+if u.scheme not in ("postgres", "postgresql"):
+    raise SystemExit("unsupported database URL scheme")
+name=u.path.lstrip("/")
+if not name or "/" in name:
+    raise SystemExit("invalid database name in DATABASE_URL")
+print(name)
+PY
+)"
+
+[[ "$actual" == "$expected" ]] || {
+  echo "PRODUCTION_DATABASE_CONTRACT=FAIL reason=database-name-mismatch expected=$expected actual=$actual" >&2
+  exit 2
+}
+
+if [[ -n "$EVIDENCE_OUT" ]]; then
+  [[ "$EVIDENCE_OUT" == /* && "$EVIDENCE_OUT" != "/" ]] || {
+    echo "PRODUCTION_DATABASE_CONTRACT=FAIL reason=evidence-absolute-path-required" >&2
+    exit 2
+  }
+  mkdir -p "$(dirname "$EVIDENCE_OUT")"
+  VERSION="$(tr -d '\r\n' < "$ROOT/VERSION")" EXPECTED="$expected" ACTUAL="$actual" python3 - "$EVIDENCE_OUT" <<'PY'
+import json, os, sys
+from datetime import datetime, timezone
+from pathlib import Path
+out=Path(sys.argv[1])
+data={
+  "schema_version": 1,
+  "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+  "release_version": os.environ["VERSION"],
+  "status": "pass",
+  "expected_database_name": os.environ["EXPECTED"],
+  "database_name": os.environ["ACTUAL"],
+  "stable_name_contract": True,
+  "database_url_recorded": False,
+  "credential_values_recorded": False,
+  "contains_secret_values": False,
+}
+out.write_text(json.dumps(data, sort_keys=True, indent=2)+"\n")
+out.chmod(0o644)
+PY
+  echo "PRODUCTION_DATABASE_EVIDENCE=PASS path=$EVIDENCE_OUT"
+fi
+
+echo "PRODUCTION_DATABASE_CONTRACT=PASS database_name=$actual"

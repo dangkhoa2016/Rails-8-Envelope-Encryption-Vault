@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ "${EUID}" -ne 0 ]]; then
+  exec sudo -- "$0" "$@"
+fi
+
+email="${1:-showcase@example.com}"
+ENV_FILE="${OPS_ENV_FILE:-/etc/ruby-envelope-vault/ops.env}"
+set -a
+. "$ENV_FILE"
+set +a
+
+export PATH="${OPS_POSTGRES_BIN:-/usr/lib/postgresql/17/bin}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export RAILS_ENV=production
+export HOME=/var/lib/ruby-envelope-vault
+
+tmp="$(mktemp /run/revault-owner-password.XXXXXX)"
+trap 'rm -f "$tmp"' EXIT
+chmod 600 "$tmp"
+chown ruby-vault:ruby-vault "$tmp"
+
+read -rsp "New owner password (14-72 chars): " p1
+printf '\n' >&2
+read -rsp "Confirm password: " p2
+printf '\n' >&2
+[[ "$p1" == "$p2" ]] || { echo "ERROR: passwords do not match" >&2; exit 2; }
+(( ${#p1} >= 14 )) || { echo "ERROR: password must be at least 14 characters" >&2; exit 2; }
+(( ${#p1} <= 72 )) || { echo "ERROR: password must be at most 72 characters" >&2; exit 2; }
+
+printf '%s' "$p1" > "$tmp"
+unset p1 p2
+
+cd /opt/ruby-envelope-vault/current
+runuser -u ruby-vault -- env \
+  PATH="$PATH" RAILS_ENV=production HOME="$HOME" \
+  DATABASE_URL="$DATABASE_URL" SECRET_KEY_BASE="$SECRET_KEY_BASE" \
+  VAULT_KEY_PROVIDER="$VAULT_KEY_PROVIDER" VAULT_ACTIVE_KEK_ID="$VAULT_ACTIVE_KEK_ID" VAULT_KEK_DIR="$VAULT_KEK_DIR" \
+  APP_HOSTS="$APP_HOSTS" DEMO_MODE="$DEMO_MODE" FORCE_SSL="$FORCE_SSL" \
+  ALLOW_SIGNUPS="$ALLOW_SIGNUPS" REQUIRE_MFA="$REQUIRE_MFA" REAUTH_ON_REVEAL="$REAUTH_ON_REVEAL" \
+  EMAIL="$email" PASSWORD_FILE="$tmp" bin/rails vault:owner:create
+
+echo "LOGIN_URL=${APP_URL%/}/session/new"
+echo "LOGIN_EMAIL=$email"
