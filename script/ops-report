@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd "$(dirname "$0")/.."
+
+started_epoch="$(date +%s)"
+timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+probe="$(mktemp)"
+trap 'rm -f "$probe"' EXIT
+
+status="pass"
+exit_code=0
+if ! script/ops-check >"$probe" 2>&1; then
+  status="fail"
+  exit_code=1
+fi
+
+finished_epoch="$(date +%s)"
+duration_seconds=$((finished_epoch - started_epoch))
+backup_file="${OPS_BACKUP_FILE:-}"
+backup_basename=""
+backup_checksum=""
+backup_status="not_provided"
+if [ -n "$backup_file" ]; then
+  backup_basename="$(basename "$backup_file")"
+  if [ -f "$backup_file" ] && [ -f "$backup_file.sha256" ]; then
+    backup_checksum="$(sha256sum "$backup_file" | awk '{print $1}')"
+    if (cd "$(dirname "$backup_file")" && sha256sum -c "$(basename "$backup_file.sha256")" >/dev/null 2>&1); then
+      backup_status="checksum_ok"
+    else
+      backup_status="checksum_failed"
+      status="fail"
+      exit_code=1
+    fi
+  else
+    backup_status="missing"
+    status="fail"
+    exit_code=1
+  fi
+fi
+
+export OPS_REPORT_TIMESTAMP="$timestamp"
+export OPS_REPORT_STATUS="$status"
+export OPS_REPORT_DURATION_SECONDS="$duration_seconds"
+export OPS_REPORT_BACKUP_BASENAME="$backup_basename"
+export OPS_REPORT_BACKUP_CHECKSUM="$backup_checksum"
+export OPS_REPORT_BACKUP_STATUS="$backup_status"
+export OPS_REPORT_PROBE="$probe"
+python3 - <<'PY'
+import json, os, re
+checks = {}
+with open(os.environ["OPS_REPORT_PROBE"], encoding="utf-8", errors="replace") as handle:
+    for line in handle:
+        match = re.match(r"^(PASS|FAIL|SKIP)\s+([A-Za-z0-9_:-]+)", line)
+        if match:
+            checks[match.group(2)] = match.group(1).lower()
+payload = {
+    "schema": "ruby-envelope-vault.ops-report.v1",
+    "checks": checks,
+    "timestamp": os.environ["OPS_REPORT_TIMESTAMP"],
+    "status": os.environ["OPS_REPORT_STATUS"],
+    "duration_seconds": int(os.environ["OPS_REPORT_DURATION_SECONDS"]),
+    "backup": {
+        "basename": os.environ["OPS_REPORT_BACKUP_BASENAME"] or None,
+        "sha256": os.environ["OPS_REPORT_BACKUP_CHECKSUM"] or None,
+        "status": os.environ["OPS_REPORT_BACKUP_STATUS"],
+    },
+}
+print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+PY
+
+exit "$exit_code"
