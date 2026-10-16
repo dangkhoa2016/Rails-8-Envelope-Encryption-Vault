@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: script/offsite-capability-preflight \
+  --dest remote:path \
+  --config /absolute/rclone.conf \
+  [--evidence /absolute/evidence.json] \
+  [--provision] [--probe-write]
+EOF
+  exit 64
+}
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+dest=""
+config=""
+evidence=""
+provision=0
+probe_write=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dest) dest="${2:-}"; shift 2 ;;
+    --config) config="${2:-}"; shift 2 ;;
+    --evidence) evidence="${2:-}"; shift 2 ;;
+    --provision) provision=1; shift ;;
+    --probe-write) probe_write=1; shift ;;
+    -h|--help) usage ;;
+    *) usage ;;
+  esac
+done
+
+[[ "$config" == /* && "$config" != "/" ]] || { echo "OFFSITE_CAPABILITY=FAIL reason=config-absolute-path-required" >&2; exit 2; }
+[[ -f "$config" && -r "$config" ]] || { echo "OFFSITE_CAPABILITY=FAIL reason=config-missing" >&2; exit 2; }
+mode="$(stat -c '%a' "$config" 2>/dev/null || stat -f '%Lp' "$config")"
+case "$mode" in 600|400) ;; *) echo "OFFSITE_CAPABILITY=FAIL reason=unsafe-config-mode" >&2; exit 2 ;; esac
+
+remote_name="${dest%%:*}"
+[[ -n "$remote_name" && "$remote_name" != "$dest" ]] || { echo "OFFSITE_CAPABILITY=FAIL reason=named-remote-required" >&2; exit 2; }
+
+resolver_args=()
+[[ "$provision" == "1" ]] && resolver_args+=(--provision)
+rclone_bin="$($ROOT/script/rclone-resolve "${resolver_args[@]}")"
+[[ -x "$rclone_bin" ]] || { echo "OFFSITE_CAPABILITY=FAIL reason=resolved-binary-not-executable" >&2; exit 2; }
+
+version_output="$("$rclone_bin" version)"
+version_line="${version_output%%$'\n'*}"
+binary_sha="$(sha256sum "$rclone_bin" | awk '{print $1}')"
+remote_type="$($rclone_bin --config "$config" config dump | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get(sys.argv[1],{}).get("type",""))' "$remote_name")"
+[[ -n "$remote_type" ]] || { echo "OFFSITE_CAPABILITY=FAIL reason=remote-not-configured" >&2; exit 2; }
+case "$remote_type" in
+  local|memory|alias) echo "OFFSITE_CAPABILITY=FAIL reason=remote-not-independent" >&2; exit 2 ;;
+esac
+
+$rclone_bin --config "$config" lsf "${dest%/}" --max-depth 1 --files-only --max-age 1s >/dev/null 2>&1 || {
+  echo "OFFSITE_CAPABILITY=FAIL reason=remote-read-check" >&2
+  exit 2
+}
+
+probe_status="not_requested"
+if [[ "$probe_write" == "1" ]]; then
+  work="$(mktemp -d)"
+  trap 'rm -rf "$work"' EXIT
+  probe="revault-capability-probe-$(date -u +%Y%m%dT%H%M%SZ)-$$.txt"
+  printf 'ruby-envelope-vault offsite capability probe\n' > "$work/$probe"
+  expected="$(sha256sum "$work/$probe" | awk '{print $1}')"
+  remote_probe="${dest%/}/.revault-capability/$probe"
+  $rclone_bin --config "$config" --retries 3 --low-level-retries 3 copyto "$work/$probe" "$remote_probe"
+  $rclone_bin --config "$config" --retries 3 --low-level-retries 3 copyto "$remote_probe" "$work/downloaded-$probe"
+  actual="$(sha256sum "$work/downloaded-$probe" | awk '{print $1}')"
+  [[ "$actual" == "$expected" ]] || { echo "OFFSITE_CAPABILITY=FAIL reason=probe-sha256-mismatch" >&2; exit 2; }
+  $rclone_bin --config "$config" --retries 3 --low-level-retries 3 deletefile "$remote_probe" >/dev/null
+  probe_status="pass"
+fi
+
+if [[ -n "$evidence" ]]; then
+  [[ "$evidence" == /* && "$evidence" != "/" ]] || { echo "OFFSITE_CAPABILITY=FAIL reason=evidence-absolute-path-required" >&2; exit 2; }
+  mkdir -p "$(dirname "$evidence")"
+  VERSION_LINE="$version_line" BINARY_SHA="$binary_sha" REMOTE_TYPE="$remote_type" PROBE_STATUS="$probe_status" python3 - "$evidence" <<'PY'
+import json, os, sys
+from datetime import datetime, timezone
+from pathlib import Path
+out=Path(sys.argv[1])
+data={
+  "schema_version":1,
+  "generated_at":datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+  "status":"pass",
+  "rclone_version":os.environ["VERSION_LINE"],
+  "rclone_binary_sha256":os.environ["BINARY_SHA"],
+  "binary_scope":"external-runtime-or-host",
+  "remote_type":os.environ["REMOTE_TYPE"],
+  "remote_read":"pass",
+  "remote_write_probe":os.environ["PROBE_STATUS"],
+  "config_path_recorded":False,
+  "remote_name_recorded":False,
+  "remote_path_recorded":False,
+  "credential_values_recorded":False,
+  "contains_secret_values":False,
+}
+out.write_text(json.dumps(data,sort_keys=True,indent=2)+"\n")
+out.chmod(0o644)
+PY
+fi
+
+echo "OFFSITE_CAPABILITY=PASS"
+echo "RCLONE_VERSION=$version_line"
+echo "RCLONE_BINARY_SHA256=$binary_sha"
+echo "REMOTE_TYPE=$remote_type"
+echo "REMOTE_WRITE_PROBE=$probe_status"
