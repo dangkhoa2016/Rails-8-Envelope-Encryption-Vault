@@ -1,0 +1,17 @@
+[Unit]
+Description=Rails 8 Envelope Encryption Vault daily encrypted backup operations
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ruby-vault
+Group=ruby-vault
+Environment=OPS_SERVICE_USER=ruby-vault
+Environment=OPS_SERVICE_GROUP=ruby-vault
+WorkingDirectory=/opt/ruby-envelope-vault/current
+EnvironmentFile=/etc/ruby-envelope-vault/ops.env
+ExecStart=/opt/ruby-envelope-vault/current/script/scheduled-ops daily
+NoNewPrivileges=true
+UMask=0077
+PrivateTmp=true

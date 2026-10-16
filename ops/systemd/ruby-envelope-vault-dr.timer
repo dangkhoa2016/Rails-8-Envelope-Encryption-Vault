@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Rails 8 Envelope Encryption Vault weekly offsite DR rehearsal
+
+[Timer]
+OnCalendar=Sun *-*-* 03:30:00 UTC
+Persistent=true
+RandomizedDelaySec=600
+Unit=ruby-envelope-vault-dr.service
+
+[Install]
+WantedBy=timers.target
