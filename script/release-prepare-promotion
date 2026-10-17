@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: script/release-prepare-promotion \
+  --archive /absolute/private-dr.tar.gz.age \
+  --outer-key /absolute/outer-recovery.agekey \
+  --provenance /absolute/provenance.json \
+  --aws-secret /absolute/aws.env \
+  [--replace]
+EOF
+  exit 64
+}
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+ARTIFACT_DIR="${RELEASE_ARTIFACT_DIR:-$ROOT/tmp/release-artifacts}"
+archive=""
+outer_key=""
+provenance=""
+aws_secret=""
+replace=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --archive) archive="${2:-}"; shift 2 ;;
+    --outer-key) outer_key="${2:-}"; shift 2 ;;
+    --provenance) provenance="${2:-}"; shift 2 ;;
+    --aws-secret) aws_secret="${2:-}"; shift 2 ;;
+    --replace) replace=1; shift ;;
+    -h|--help) usage ;;
+    *) usage ;;
+  esac
+done
+
+[[ -f "$ARTIFACT_DIR/RELEASE-METADATA.json" ]] || {
+  echo "RELEASE_PREPARE_PROMOTION=FAIL reason=missing-prepromote-metadata" >&2
+  exit 2
+}
+
+python3 - "$ARTIFACT_DIR/RELEASE-METADATA.json" <<'PY'
+import json, sys
+data=json.load(open(sys.argv[1]))
+if data.get("phase") != "prepromote":
+    raise SystemExit("RELEASE_PREPARE_PROMOTION=FAIL reason=metadata-not-prepromote")
+if data.get("release_verify") != "pass":
+    raise SystemExit("RELEASE_PREPARE_PROMOTION=FAIL reason=release-verify-not-pass")
+if data.get("private_dr_restore_acceptance") != "pass":
+    raise SystemExit("RELEASE_PREPARE_PROMOTION=FAIL reason=private-dr-acceptance-not-pass")
+if data.get("private_dr_provenance") != "pass":
+    raise SystemExit("RELEASE_PREPARE_PROMOTION=FAIL reason=private-dr-provenance-not-pass")
+PY
+
+args=(
+  --archive "$archive"
+  --outer-key "$outer_key"
+  --provenance "$provenance"
+  --aws-secret "$aws_secret"
+  --evidence-dir "$ARTIFACT_DIR"
+)
+if [[ "$replace" == "1" ]]; then
+  args+=(--replace)
+fi
+
+"$ROOT/script/prepare-production-database" "${args[@]}"
+
+python3 - "$ARTIFACT_DIR/PRODUCTION-DATABASE-PREPARE.json" "$("$ROOT/script/production-database-name")" <<'PY'
+import json, sys
+data=json.load(open(sys.argv[1]))
+expected=sys.argv[2]
+if data.get("status") != "pass":
+    raise SystemExit("RELEASE_PREPARE_PROMOTION=FAIL reason=database-prepare-not-pass")
+if data.get("database_name") != expected:
+    raise SystemExit("RELEASE_PREPARE_PROMOTION=FAIL reason=database-name-mismatch")
+if data.get("stable_name_contract") is not True:
+    raise SystemExit("RELEASE_PREPARE_PROMOTION=FAIL reason=stable-name-contract-not-pass")
+PY
+
+echo "RELEASE_PREPARE_PROMOTION=PASS database_name=$("$ROOT/script/production-database-name")"
+echo "PROMOTION_REPOINT_ALLOWED=yes"

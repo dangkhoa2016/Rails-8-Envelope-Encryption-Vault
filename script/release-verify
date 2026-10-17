@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$ROOT"
+source ./activate-kaggle.sh >/dev/null
+
+run() { echo "== $1 =="; shift; "$@"; }
+run "repository policy" ./script/repository-policy
+run "portability policy" ./script/portability-check
+run "documentation links" ./script/doc-link-check
+run "zeitwerk" bin/rails zeitwerk:check
+run "rails tests" bin/rails test
+run "system tests" bin/rails test:system
+run "rubocop" bundle exec rubocop
+run "brakeman" bundle exec brakeman --no-pager
+run "bundler audit" bundle exec bundler-audit check --update
+run "crypto self-test" ./script/crypto-self-test
+run "security self-test" ./script/security-self-test
+run "accessibility smoke" ./script/accessibility-smoke
+echo "RELEASE_VERIFY=PASS version=$(cat VERSION)"

@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+EVIDENCE_ROOT="${RELEASE_EVIDENCE_ROOT:-$(dirname "$ROOT")}"
+OUT="${RELEASE_HISTORY_OUT:-$ROOT/tmp/release-history}"
+mkdir -p "$OUT"
+python3 - "$OUT" "$EVIDENCE_ROOT" <<'PY'
+import json, os, re, sys
+from pathlib import Path
+
+out=Path(sys.argv[1])
+evidence_root=Path(sys.argv[2])
+root=Path(__file__).resolve().parent.parent if "__file__" in globals() else None
+rows=[]
+
+def sha_map(path):
+    result={}
+    if path.is_file():
+        for line in path.read_text().splitlines():
+            parts=line.strip().split(None,1)
+            if len(parts)==2:
+                result[parts[1].strip()]=parts[0]
+    return result
+
+for n in (28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46):
+    ad=evidence_root/f"ruby-envelope-vault-FIX{n}-artifacts"
+    meta=ad/"RELEASE-METADATA.json"
+    if meta.is_file():
+        j=json.loads(meta.read_text())
+        rows.append({
+            "release_version": j.get("release_version"),
+            "evidence_model": "metadata-native",
+            "legacy_without_metadata": False,
+            "phase": j.get("phase"),
+            "release_verify": j.get("release_verify"),
+            "isolated_restore": j.get("isolated_restore"),
+            "offhost_roundtrip": j.get("offhost_roundtrip"),
+            "promotion_performed": j.get("promotion_performed"),
+            "artifact_sha256": j.get("artifact_sha256",{}),
+            "source_metadata": str(meta),
+        })
+        continue
+
+    if n==28:
+        handoff=evidence_root/"RUBY-ENVELOPE-VAULT-SESSION-HANDOFF-2026-09-29-FIX28-MACHINE-READABLE-RECOVERY-DIAGNOSTICS.md"
+        text=handoff.read_text() if handoff.is_file() else ""
+        rows.append({
+            "release_version": "0.1.2-FIX28",
+            "evidence_model": "legacy-evidence",
+            "legacy_without_metadata": True,
+            "phase": "promoted" if "current=/mnt/workspace/ruby-envelope-vault/FIX28" in text else "unknown",
+            "release_verify": "pass" if "RELEASE_VERIFY=PASS version=0.1.2-FIX28" in text else "unknown",
+            "isolated_restore": "pass" if "FIX28_ISOLATED_RESTORE=PASS" in text else "unknown",
+            "offhost_roundtrip": "pass" if "FIX28_OFFHOST_ROUNDTRIP=PASS" in text else "unknown",
+            "promotion_performed": True if "current=/mnt/workspace/ruby-envelope-vault/FIX28" in text else None,
+            "artifact_sha256": sha_map(ad/"SHA256SUMS.txt"),
+            "source_handoff": str(handoff),
+            "source_checksums": str(ad/"SHA256SUMS.txt"),
+        })
+
+for current_version in ("0.1.3-RC1", "0.1.3"):
+    current_ad=evidence_root/f"ruby-envelope-vault-{current_version}-artifacts"
+    current_meta=current_ad/"RELEASE-METADATA.json"
+    if current_meta.is_file() and not any(r.get("release_version")==current_version for r in rows):
+        j=json.loads(current_meta.read_text())
+        rows.append({
+            "release_version": j.get("release_version"), "evidence_model":"metadata-native", "legacy_without_metadata":False,
+            "phase":j.get("phase"), "release_verify":j.get("release_verify"), "isolated_restore":j.get("isolated_restore"),
+            "offhost_roundtrip":j.get("offhost_roundtrip"), "promotion_performed":j.get("promotion_performed"),
+            "artifact_sha256":j.get("artifact_sha256",{}), "source_metadata":str(current_meta),
+        })
+
+for current_version, dirname in (("0.1.5", "rev015-final-release-artifacts"), ("0.1.6", "rev016-final-release-artifacts")):
+    current_meta=evidence_root/dirname/"RELEASE-METADATA.json"
+    if current_meta.is_file() and not any(r.get("release_version")==current_version for r in rows):
+        j=json.loads(current_meta.read_text())
+        rows.append({
+            "release_version": j.get("release_version"), "evidence_model":"metadata-native", "legacy_without_metadata":False,
+            "phase":j.get("phase"), "release_verify":j.get("release_verify"), "isolated_restore":j.get("isolated_restore"),
+            "offhost_roundtrip":j.get("offhost_roundtrip"), "promotion_performed":j.get("promotion_performed"),
+            "artifact_sha256":j.get("artifact_sha256",{}), "source_metadata":str(current_meta),
+        })
+doc={
+    "schema_version":1,
+    "generated_from_releases":[r.get("release_version") for r in rows],
+    "releases":rows,
+}
+(out/"RELEASE-HISTORY.json").write_text(json.dumps(doc,sort_keys=True,indent=2)+"\n")
+
+lines=["# Rails 8 Envelope Encryption Vault Release History","",
+       "This index distinguishes metadata-native releases from older legacy evidence. FIX28 predates RELEASE-METADATA.json and is not retroactively presented as metadata-native.","",
+       "| Release | Evidence model | Verify | Restore | Off-host | Promoted |",
+       "|---|---|---|---|---|---|"]
+for r in rows:
+    lines.append(f"| {r['release_version']} | {r['evidence_model']} | {r['release_verify']} | {r['isolated_restore']} | {r['offhost_roundtrip']} | {r['promotion_performed']} |")
+lines += ["","## Artifact SHA-256",""]
+for r in rows:
+    lines.append(f"### {r['release_version']}")
+    for name,sha in sorted(r["artifact_sha256"].items()):
+        lines.append(f"- `{name}` — `{sha}`")
+    lines.append("")
+(out/"RELEASE-HISTORY.md").write_text("\n".join(lines))
+PY
+chmod 644 "$OUT/RELEASE-HISTORY.json" "$OUT/RELEASE-HISTORY.md"
+echo "RELEASE_HISTORY=PASS dir=$OUT"
