@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION="$(tr -d '\r\n' < "$ROOT/VERSION")"
+SHOWCASE_DIR="${SHOWCASE_DIR:-$ROOT/tmp/showcase/screenshots}"
+OUTPUT_DIR="${PUBLIC_SHOWCASE_OUTPUT_DIR:-$ROOT/tmp/public-showcase}"
+NAME="ruby-envelope-vault-${VERSION}-PUBLIC-SHOWCASE"
+STAGE="$OUTPUT_DIR/$NAME"
+ARCHIVE="$OUTPUT_DIR/$NAME.tar.gz"
+
+rm -rf "$STAGE" "$ARCHIVE" "$ARCHIVE.sha256"
+mkdir -p "$STAGE/docs" "$STAGE/screenshots"
+
+# Source release package: public landing pages and the full documentation collection.
+# Documentation is maintained under docs/, not scattered across repository root.
+for f in README.md README.vi.md LICENSE VERSION; do
+  [ -f "$ROOT/$f" ] || { echo "missing public document: $f" >&2; exit 1; }
+  cp "$ROOT/$f" "$STAGE/"
+done
+
+# Includes ARCHITECTURE.md, ACCESSIBILITY.md, PUBLICATION-STATUS.md and their
+# Vietnamese companions, along with BACKUP-RESTORE.md and the rest of docs/.
+for f in "$ROOT"/docs/*.md; do
+  [ -f "$f" ] || { echo "no documents found under docs/" >&2; exit 1; }
+  cp "$f" "$STAGE/docs/"
+done
+cp "$ROOT/docs/aws-kms-runtime-policy.json.template" "$STAGE/docs/"
+
+[ -d "$SHOWCASE_DIR" ] || { echo "showcase directory not found: $SHOWCASE_DIR" >&2; exit 1; }
+cp "$SHOWCASE_DIR"/*.png "$STAGE/screenshots/"
+cp "$SHOWCASE_DIR"/SHA256SUMS.txt "$SHOWCASE_DIR"/MANIFEST.tsv "$STAGE/screenshots/"
+
+# Keep curated package links valid without copying private/runtime source.
+# Missing stage-local references to public, tracked source paths are converted
+# to immutable release links. Never embed credentials, KEKs or private state.
+python3 - "$STAGE" "$ROOT" <<'PYDOC'
+from pathlib import Path
+from urllib.parse import quote
+import re,sys
+stage=Path(sys.argv[1]).resolve()
+root=Path(sys.argv[2]).resolve()
+pat=re.compile(r'(\[[^\]\n]*\]\()([^)]+)(\))')
+for f in sorted(stage.rglob("*.md")):
+    content=f.read_text(encoding="utf-8")
+    def rewrite(m):
+        raw=m.group(2)
+        if raw.startswith(("https://","http://","mailto:","data:","#")):
+            return m.group(0)
+        target,mark,frag=raw.partition("#")
+        if not target or " " in target:
+            return m.group(0)
+        packaged=(f.parent/target).resolve()
+        if packaged.is_file() and packaged.is_relative_to(stage):
+            return m.group(0)
+        source=root/f.relative_to(stage)
+        source_target=(source.parent/target).resolve()
+        if not source_target.is_relative_to(root) or not source_target.exists():
+            raise SystemExit(f"unresolved showcase link: {f.relative_to(stage)} -> {raw}")
+        rel=source_target.relative_to(root).as_posix()
+        kind="tree" if source_target.is_dir() else "blob"
+        url="https://github.com/dangkhoa2016/Rails-8-Envelope-Encryption-Vault/"+kind+"/v1.0.0/"+quote(rel)
+        return m.group(1)+url+("#"+frag if mark else "")+m.group(3)
+    updated=pat.sub(rewrite,content)
+    if updated!=content:
+        f.write_text(updated,encoding="utf-8")
+PYDOC
+
+if find "$STAGE" -type f | grep -E '/(\.env|rclone\.conf|.*\.(age|key|dump)|master-recovery|recovery\.agekey)$'; then
+  echo "PUBLIC_SHOWCASE_DENYLIST=FAIL" >&2; exit 1
+fi
+if grep -RIlE 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|AWS_SECRET_ACCESS_KEY=[^[:space:]]+|MASTER_PRIVATE_KEY=' "$STAGE"; then
+  echo "PUBLIC_SHOWCASE_SECRET_PATTERN_SCAN=FAIL" >&2; exit 1
+fi
+
+( cd "$STAGE" && find . -type f ! -path './SHA256SUMS.txt' -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt )
+PUBLIC_PACKAGE_INTEGRITY_OUT="$OUTPUT_DIR/PUBLIC-PACKAGE-INTEGRITY.json" "$ROOT/script/public-showcase-validate" "$STAGE"
+tar -C "$OUTPUT_DIR" -czf "$ARCHIVE" "$NAME"
+sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+chmod 600 "$ARCHIVE" "$ARCHIVE.sha256"
+echo "PUBLIC_SHOWCASE_PACKAGE=PASS"
+echo "archive=$ARCHIVE"
+cat "$ARCHIVE.sha256"

@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+STAGE="${1:?usage: public-showcase-validate STAGE_DIR [INTEGRITY_JSON_OUT]}"
+INTEGRITY_OUT="${2:-${PUBLIC_PACKAGE_INTEGRITY_OUT:-}}"
+python3 - "$STAGE" "$INTEGRITY_OUT" <<'PYDOC'
+from pathlib import Path
+import hashlib, json, re, struct, sys
+stage=Path(sys.argv[1]).resolve()
+integrity_out=Path(sys.argv[2]).resolve() if len(sys.argv) > 2 and sys.argv[2] else None
+if not stage.is_dir():
+    raise SystemExit(f'public showcase stage not found: {stage}')
+errors=[]; checked=0
+
+def sha256(path):
+    h=hashlib.sha256()
+    with path.open('rb') as f:
+        for chunk in iter(lambda:f.read(1024*1024), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+def png_dimensions(path):
+    with path.open('rb') as f:
+        sig=f.read(8)
+        if sig != b'\x89PNG\r\n\x1a\n':
+            raise ValueError('invalid PNG signature')
+        length=struct.unpack('>I', f.read(4))[0]
+        kind=f.read(4)
+        if kind != b'IHDR' or length < 8:
+            raise ValueError('missing IHDR')
+        width,height=struct.unpack('>II', f.read(8))
+        return width,height
+
+# Package-local Markdown references.
+files=[stage/'README.md']+sorted((stage/'docs').glob('*.md'))
+for f in files:
+    if not f.is_file():
+        errors.append(f'missing document: {f.relative_to(stage)}')
+        continue
+    text=f.read_text(errors='ignore')
+    for ref in re.findall(r'\[[^\]]*\]\(([^)]+)\)', text):
+        ref=ref.strip().split('#',1)[0]
+        if not ref or ref.startswith(('http://','https://','mailto:')):
+            continue
+        checked += 1
+        target=(f.parent/ref).resolve()
+        try:
+            target.relative_to(stage)
+        except ValueError:
+            errors.append(f'path escapes package: {f.relative_to(stage)} -> {ref}')
+            continue
+        if not target.exists():
+            errors.append(f'broken link: {f.relative_to(stage)} -> {ref}')
+
+shots=stage/'screenshots'
+for required in [shots/'SHA256SUMS.txt', shots/'MANIFEST.tsv', stage/'SHA256SUMS.txt']:
+    if not required.is_file(): errors.append(f'missing required file: {required.relative_to(stage)}')
+
+pngs=sorted(shots.glob('*.png'))
+if len(pngs) != 10:
+    errors.append(f'expected 10 screenshots, found {len(pngs)}')
+
+# Screenshot SHA256SUMS must exactly cover the PNG set and match bytes.
+shot_sums={}
+if (shots/'SHA256SUMS.txt').is_file():
+    for line in (shots/'SHA256SUMS.txt').read_text().splitlines():
+        parts=line.strip().split(None,1)
+        if len(parts)==2:
+            shot_sums[parts[1].strip().lstrip('*')]=parts[0]
+    if set(shot_sums) != {p.name for p in pngs}:
+        errors.append('screenshot SHA256SUMS coverage mismatch')
+    for p in pngs:
+        expected=shot_sums.get(p.name)
+        if expected and sha256(p) != expected:
+            errors.append(f'screenshot checksum mismatch: {p.name}')
+
+# MANIFEST.tsv must exactly cover the PNG set and match width/height/bytes.
+manifest={}
+if (shots/'MANIFEST.tsv').is_file():
+    lines=(shots/'MANIFEST.tsv').read_text().splitlines()
+    if not lines or lines[0].split('\t') != ['file','width','height','bytes']:
+        errors.append('invalid MANIFEST.tsv header')
+    else:
+        for line in lines[1:]:
+            if not line.strip(): continue
+            parts=line.split('\t')
+            if len(parts)!=4:
+                errors.append(f'invalid manifest row: {line}')
+                continue
+            name,w,h,b=parts
+            try: manifest[name]=(int(w),int(h),int(b))
+            except ValueError: errors.append(f'invalid manifest numeric fields: {line}')
+        if set(manifest) != {p.name for p in pngs}:
+            errors.append('MANIFEST.tsv coverage mismatch')
+        for p in pngs:
+            if p.name not in manifest: continue
+            try: width,height=png_dimensions(p)
+            except Exception as e:
+                errors.append(f'PNG parse failed {p.name}: {e}')
+                continue
+            actual=(width,height,p.stat().st_size)
+            if actual != manifest[p.name]:
+                errors.append(f'manifest mismatch {p.name}: expected={manifest[p.name]} actual={actual}')
+
+# Root SHA256SUMS must cover every bundled file except itself and match all hashes.
+root_sums={}
+root_sum_file=stage/'SHA256SUMS.txt'
+if root_sum_file.is_file():
+    for line in root_sum_file.read_text().splitlines():
+        parts=line.strip().split(None,1)
+        if len(parts)==2:
+            root_sums[parts[1].strip().lstrip('*').lstrip('./')]=parts[0]
+    actual_files=sorted(p.relative_to(stage).as_posix() for p in stage.rglob('*') if p.is_file() and p != root_sum_file)
+    if set(root_sums) != set(actual_files):
+        missing=sorted(set(actual_files)-set(root_sums))
+        extra=sorted(set(root_sums)-set(actual_files))
+        errors.append(f'root SHA256SUMS coverage mismatch missing={missing} extra={extra}')
+    for rel in actual_files:
+        expected=root_sums.get(rel)
+        if expected and sha256(stage/rel) != expected:
+            errors.append(f'root checksum mismatch: {rel}')
+
+if errors:
+    print('PUBLIC_SHOWCASE_VALIDATE=FAIL')
+    print('\n'.join(errors))
+    raise SystemExit(1)
+
+metrics={
+    "schema_version": 1,
+    "release_version": stage.name.removeprefix("ruby-envelope-vault-").removesuffix("-PUBLIC-SHOWCASE"),
+    "status": "pass",
+    "links_checked": checked,
+    "screenshot_count": len(pngs),
+    "manifest_rows": len(manifest),
+    "root_file_count": len(root_sums),
+    "screenshot_checksum_status": "pass",
+    "manifest_dimensions_status": "pass",
+    "root_checksum_status": "pass",
+}
+if integrity_out:
+    integrity_out.parent.mkdir(parents=True, exist_ok=True)
+    integrity_out.write_text(json.dumps(metrics, sort_keys=True, indent=2)+"\n")
+    integrity_out.chmod(0o644)
+    print(f'PUBLIC_PACKAGE_INTEGRITY_JSON=PASS path={integrity_out}')
+print(f'PUBLIC_SHOWCASE_VALIDATE=PASS checked={checked} screenshots={len(pngs)} root_files={len(root_sums)} manifest_rows={len(manifest)}')
+PYDOC

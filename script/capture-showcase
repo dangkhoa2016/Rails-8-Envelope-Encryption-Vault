@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+OUTPUT="${SHOWCASE_OUTPUT:-$ROOT/tmp/showcase/screenshots}"
+mkdir -p "$OUTPUT"
+rm -f "$OUTPUT"/*.png "$OUTPUT"/SHA256SUMS.txt "$OUTPUT"/MANIFEST.tsv
+
+export SHOWCASE_OUTPUT="$OUTPUT"
+export DEMO_MODE=true
+export RAILS_ENV=test
+
+bin/rails test script/showcase_capture_test.rb
+
+( cd "$OUTPUT" && sha256sum -- *.png > SHA256SUMS.txt )
+python3 - "$OUTPUT" <<'PY2'
+import struct, sys
+from pathlib import Path
+out=Path(sys.argv[1])
+rows=["file\twidth\theight\tbytes"]
+for p in sorted(out.glob("*.png")):
+    with p.open("rb") as f:
+        sig=f.read(24)
+    if sig[:8] != b"\x89PNG\r\n\x1a\n":
+        raise SystemExit(f"not a PNG: {p}")
+    w,h=struct.unpack(">II", sig[16:24])
+    rows.append(f"{p.name}\t{w}\t{h}\t{p.stat().st_size}")
+(out/"MANIFEST.tsv").write_text("\n".join(rows)+"\n")
+PY2
+
+echo "SHOWCASE_CAPTURE=PASS output=$OUTPUT"
