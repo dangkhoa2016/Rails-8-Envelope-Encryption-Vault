@@ -1,0 +1,246 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: script/release-promotion-dry-run \
+  --archive /absolute/private-dr.tar.gz.age \
+  --outer-key /absolute/outer-recovery.agekey \
+  --provenance /absolute/provenance.json \
+  --aws-secret /absolute/aws.env \
+  --rclone-dest remote:path \
+  --rclone-config /absolute/rclone.conf \
+  --rclone-bin /absolute/rclone \
+  --recovery-secrets-root /absolute/secrets \
+  --expected-current /absolute/release \
+  [--artifact-dir /absolute/dir] \
+  [--production-base-url http://127.0.0.1:3000]
+EOF
+  exit 64
+}
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+archive=""
+outer_key=""
+provenance=""
+aws_secret=""
+rclone_dest=""
+rclone_config=""
+rclone_bin=""
+recovery_secrets_root=""
+expected_current=""
+artifact_dir=""
+production_base_url="http://127.0.0.1:3000"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --archive) archive="${2:-}"; shift 2 ;;
+    --outer-key) outer_key="${2:-}"; shift 2 ;;
+    --provenance) provenance="${2:-}"; shift 2 ;;
+    --aws-secret) aws_secret="${2:-}"; shift 2 ;;
+    --rclone-dest) rclone_dest="${2:-}"; shift 2 ;;
+    --rclone-config) rclone_config="${2:-}"; shift 2 ;;
+    --rclone-bin) rclone_bin="${2:-}"; shift 2 ;;
+    --recovery-secrets-root) recovery_secrets_root="${2:-}"; shift 2 ;;
+    --expected-current) expected_current="${2:-}"; shift 2 ;;
+    --artifact-dir) artifact_dir="${2:-}"; shift 2 ;;
+    --production-base-url) production_base_url="${2:-}"; shift 2 ;;
+    -h|--help) usage ;;
+    *) usage ;;
+  esac
+done
+
+for p in "$archive" "$outer_key" "$provenance" "$aws_secret" "$rclone_config" "$rclone_bin" "$recovery_secrets_root" "$expected_current"; do
+  [[ "$p" == /* && "$p" != "/" ]] || {
+    echo "M4_DRY_RUN=FAIL reason=absolute-path-required" >&2
+    exit 2
+  }
+done
+for p in "$archive" "$outer_key" "$provenance" "$aws_secret" "$rclone_config" "$rclone_bin"; do
+  [[ -f "$p" && -r "$p" ]] || {
+    echo "M4_DRY_RUN=FAIL reason=missing-file-input" >&2
+    exit 2
+  }
+done
+for p in "$recovery_secrets_root" "$expected_current"; do
+  [[ -d "$p" && -r "$p" ]] || {
+    echo "M4_DRY_RUN=FAIL reason=missing-directory-input" >&2
+    exit 2
+  }
+done
+[[ -n "$rclone_dest" ]] || {
+  echo "M4_DRY_RUN=FAIL reason=missing-rclone-destination" >&2
+  exit 2
+}
+
+artifact_dir="${artifact_dir:-$ROOT/tmp/m4-release-artifacts}"
+[[ "$artifact_dir" == /* && "$artifact_dir" != "/" ]] || {
+  echo "M4_DRY_RUN=FAIL reason=artifact-dir-absolute-path-required" >&2
+  exit 2
+}
+mkdir -p "$artifact_dir"
+
+current_link="${RELEASE_CURRENT_LINK:-$(dirname "$ROOT")/current}"
+[[ -L "$current_link" ]] || {
+  echo "M4_DRY_RUN=FAIL reason=current-link-missing" >&2
+  exit 2
+}
+current_before="$(readlink -f "$current_link")"
+expected_current="$(cd "$expected_current" && pwd -P)"
+[[ "$current_before" == "$expected_current" ]] || {
+  echo "M4_DRY_RUN=FAIL reason=current-not-expected-production" >&2
+  exit 2
+}
+
+http_code() {
+  curl -sS -o /dev/null -w '%{http_code}' "$1"
+}
+[[ "$(http_code "$production_base_url/up")" == "200" ]] || {
+  echo "M4_DRY_RUN=FAIL reason=production-up-not-200" >&2
+  exit 2
+}
+[[ "$(http_code "$production_base_url/ready")" == "200" ]] || {
+  echo "M4_DRY_RUN=FAIL reason=production-ready-not-200" >&2
+  exit 2
+}
+
+export ENV_FILE=/dev/null
+# shellcheck disable=SC1091
+source "$ROOT/activate-runtime.sh" >/dev/null
+# shellcheck disable=SC1091
+source "$ROOT/.env.kaggle"
+export PRIVATE_DR_RUNTIME_ENV_FILE="${PRIVATE_DR_RUNTIME_ENV_FILE:-$ROOT/.env.kaggle}"
+
+stable_db="$("$ROOT/script/production-database-name")"
+pg_bindir="$(pg_config --bindir)"
+pg_socket="${RUNTIME_ROOT:?RUNTIME_ROOT must be set}/postgres/socket"
+pg_port="${PG_PORT:-5432}"
+stable_exists="$("$pg_bindir/psql" -h "$pg_socket" -p "$pg_port" -U postgres -d postgres -Atqc "select count(*) from pg_database where datname='$stable_db'")"
+[[ "$stable_exists" == "0" ]] || {
+  echo "M4_DRY_RUN=FAIL reason=stable-database-preexists" >&2
+  exit 2
+}
+
+cleanup_armed=0
+cleanup() {
+  rc=$?
+  set +e
+  if [[ "$cleanup_armed" == "1" ]]; then
+    "$pg_bindir/dropdb" -h "$pg_socket" -p "$pg_port" -U postgres --if-exists --force "$stable_db" >/dev/null 2>&1 || true
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT
+
+export RCLONE_BIN="$rclone_bin"
+export REV_SECRETS_ROOT="$recovery_secrets_root"
+export RELEASE_ARTIFACT_DIR="$artifact_dir"
+export RELEASE_REQUIRE_OFFSITE_PREFLIGHT=1
+export RELEASE_OFFSITE_RCLONE_DEST="$rclone_dest"
+export RELEASE_RCLONE_CONFIG="$rclone_config"
+export RELEASE_RCLONE_PROVISION=0
+export RELEASE_OFFSITE_PROBE_WRITE=1
+export RELEASE_REQUIRE_PRIVATE_DR=1
+export RELEASE_REQUIRE_LIVE_AWS_KMS=1
+export RELEASE_PRIVATE_DR_ARCHIVE="$archive"
+export RELEASE_PRIVATE_DR_OUTER_KEY="$outer_key"
+export RELEASE_PRIVATE_DR_PROVENANCE_FILE="$provenance"
+export RELEASE_AWS_SECRET_FILE="$aws_secret"
+
+"$ROOT/script/release-seal-prepromote"
+
+python3 - "$artifact_dir/RELEASE-METADATA.json" <<'PY'
+import json, sys
+data=json.load(open(sys.argv[1]))
+if data.get("phase") != "prepromote":
+    raise SystemExit("M4_DRY_RUN=FAIL reason=metadata-not-prepromote")
+if data.get("promotion_performed") is True:
+    raise SystemExit("M4_DRY_RUN=FAIL reason=promotion-performed")
+if data.get("release_verify") != "pass":
+    raise SystemExit("M4_DRY_RUN=FAIL reason=release-verify-not-pass")
+if data.get("private_dr_restore_acceptance") != "pass":
+    raise SystemExit("M4_DRY_RUN=FAIL reason=private-dr-acceptance-not-pass")
+if data.get("private_dr_provenance") != "pass":
+    raise SystemExit("M4_DRY_RUN=FAIL reason=private-dr-provenance-not-pass")
+PY
+
+cleanup_armed=1
+"$ROOT/script/release-prepare-promotion" \
+  --archive "$archive" \
+  --outer-key "$outer_key" \
+  --provenance "$provenance" \
+  --aws-secret "$aws_secret"
+
+prepare_summary="$artifact_dir/PRODUCTION-DATABASE-PREPARE.json"
+python3 - "$prepare_summary" "$provenance" "$stable_db" <<'PY'
+import json, sys
+prepare=json.load(open(sys.argv[1]))
+provenance=json.load(open(sys.argv[2]))
+stable=sys.argv[3]
+if prepare.get("status") != "pass":
+    raise SystemExit("M4_DRY_RUN=FAIL reason=stable-db-prepare-not-pass")
+if prepare.get("database_name") != stable:
+    raise SystemExit("M4_DRY_RUN=FAIL reason=stable-db-name-mismatch")
+if prepare.get("stable_name_contract") is not True:
+    raise SystemExit("M4_DRY_RUN=FAIL reason=stable-name-contract-not-pass")
+if prepare.get("database_counts") != provenance.get("database_counts"):
+    raise SystemExit("M4_DRY_RUN=FAIL reason=production-counts-mismatch")
+if prepare.get("historical_decrypt") != "pass":
+    raise SystemExit("M4_DRY_RUN=FAIL reason=historical-decrypt-not-pass")
+if prepare.get("http_up") != 200 or prepare.get("http_ready") != 200:
+    raise SystemExit("M4_DRY_RUN=FAIL reason=prepared-db-readiness-not-pass")
+PY
+
+"$pg_bindir/dropdb" -h "$pg_socket" -p "$pg_port" -U postgres --if-exists --force "$stable_db"
+cleanup_armed=0
+stable_exists_after="$("$pg_bindir/psql" -h "$pg_socket" -p "$pg_port" -U postgres -d postgres -Atqc "select count(*) from pg_database where datname='$stable_db'")"
+[[ "$stable_exists_after" == "0" ]] || {
+  echo "M4_DRY_RUN=FAIL reason=stable-database-cleanup-failed" >&2
+  exit 2
+}
+
+current_after="$(readlink -f "$current_link")"
+[[ "$current_after" == "$current_before" ]] || {
+  echo "M4_DRY_RUN=FAIL reason=current-changed" >&2
+  exit 2
+}
+up_after="$(http_code "$production_base_url/up")"
+ready_after="$(http_code "$production_base_url/ready")"
+[[ "$up_after" == "200" && "$ready_after" == "200" ]] || {
+  echo "M4_DRY_RUN=FAIL reason=production-health-regressed" >&2
+  exit 2
+}
+
+summary="$artifact_dir/M4-DRY-RUN-READINESS.json"
+VERSION="$(tr -d '\r\n' < "$ROOT/VERSION")" \
+CURRENT="$current_after" STABLE_DB="$stable_db" PREPARE="$prepare_summary" \
+UP="$up_after" READY="$ready_after" SUMMARY="$summary" python3 <<'PY'
+import json, os
+from datetime import datetime, timezone
+from pathlib import Path
+prepare=json.loads(Path(os.environ["PREPARE"]).read_text())
+data={
+  "schema_version": 1,
+  "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+  "status": "pass",
+  "release_version": os.environ["VERSION"],
+  "current_unchanged": True,
+  "repoint_performed": False,
+  "production_start_performed": False,
+  "stable_database_name": os.environ["STABLE_DB"],
+  "stable_database_cleanup": "pass",
+  "database_counts": prepare["database_counts"],
+  "historical_decrypt": prepare["historical_decrypt"],
+  "production_http_up": int(os.environ["UP"]),
+  "production_http_ready": int(os.environ["READY"]),
+  "credential_values_recorded": False,
+  "key_ids_recorded": False,
+  "plaintext_recorded": False,
+}
+out=Path(os.environ["SUMMARY"])
+out.write_text(json.dumps(data, sort_keys=True, indent=2)+"\n")
+out.chmod(0o644)
+PY
+
+echo "M4_DRY_RUN=PASS"
+echo "M4_DRY_RUN_SUMMARY=PASS path=$summary"
