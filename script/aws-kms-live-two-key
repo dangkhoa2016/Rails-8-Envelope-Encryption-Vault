@@ -1,0 +1,88 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "bundler/setup"
+require "openssl"
+require_relative "../app/services/key_providers/base"
+require_relative "../app/services/key_providers/aws_kms_client"
+require_relative "../app/services/key_providers/external_kms"
+
+region = ENV["AWS_REGION"].to_s
+region = ENV["AWS_DEFAULT_REGION"].to_s if region.empty?
+key01 = ENV["AWS_KMS_KEY01_ID"].to_s
+key02 = ENV["AWS_KMS_KEY02_ID"].to_s
+
+abort "AWS_KMS_TWO_KEY_LIVE=SKIP reason=missing-region" if region.empty?
+abort "AWS_KMS_TWO_KEY_LIVE=SKIP reason=missing-key01" if key01.empty?
+abort "AWS_KMS_TWO_KEY_LIVE=SKIP reason=missing-key02" if key02.empty?
+abort "AWS_KMS_TWO_KEY_LIVE=FAIL reason=same-key" if key01 == key02
+
+client = KeyProviders::AwsKmsClient.new(region: region)
+old_provider = KeyProviders::ExternalKms.new(
+  provider_name: "aws_kms",
+  active_key_id: key01,
+  client: client
+)
+new_provider = KeyProviders::ExternalKms.new(
+  provider_name: "aws_kms",
+  active_key_id: key02,
+  client: client
+)
+context = {
+  user_id: "kms-two-key-live-user",
+  vault_item_id: "kms-two-key-live-item",
+  vault_item_version_id: "kms-two-key-live-version"
+}
+
+old_provider.verify_key!
+puts "AWS_KMS_KEY01_VERIFY=PASS"
+new_provider.verify_key!
+puts "AWS_KMS_KEY02_VERIFY=PASS"
+
+dek = OpenSSL::Random.random_bytes(32)
+old_wrapped = old_provider.wrap_key(dek: dek, context: context)
+abort "AWS_KMS_OLD_WRAP=FAIL" if old_wrapped.empty?
+puts "AWS_KMS_OLD_WRAP=PASS"
+
+old_unwrapped = old_provider.unwrap_key(
+  wrapped_key: old_wrapped,
+  key_id: key01,
+  context: context
+)
+abort "AWS_KMS_OLD_UNWRAP=FAIL" unless old_unwrapped == dek
+puts "AWS_KMS_OLD_UNWRAP=PASS"
+
+new_wrapped = new_provider.wrap_key(dek: old_unwrapped, context: context)
+abort "AWS_KMS_NEW_WRAP=FAIL" if new_wrapped.empty?
+puts "AWS_KMS_NEW_WRAP=PASS"
+new_unwrapped = new_provider.unwrap_key(
+  wrapped_key: new_wrapped,
+  key_id: key02,
+  context: context
+)
+abort "AWS_KMS_NEW_UNWRAP=FAIL" unless new_unwrapped == dek
+puts "AWS_KMS_NEW_UNWRAP=PASS"
+
+abort "AWS_KMS_DEK_EQUAL=FAIL" unless old_unwrapped == new_unwrapped
+puts "AWS_KMS_DEK_EQUAL=PASS"
+
+historical = old_provider.unwrap_key(
+  wrapped_key: old_wrapped,
+  key_id: key01,
+  context: context
+)
+abort "AWS_KMS_HISTORICAL_DECRYPT=FAIL" unless historical == dek
+puts "AWS_KMS_HISTORICAL_DECRYPT=PASS"
+
+begin
+  new_provider.unwrap_key(
+    wrapped_key: new_wrapped,
+    key_id: key02,
+    context: context.merge(vault_item_version_id: "wrong-version")
+  )
+  abort "AWS_KMS_WRONG_CONTEXT=FAIL accepted"
+rescue Crypto::Error
+  puts "AWS_KMS_WRONG_CONTEXT=PASS"
+end
+
+puts "AWS_KMS_TWO_KEY_LIVE=PASS"

@@ -1,0 +1,61 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "bundler/setup"
+require "openssl"
+require_relative "../app/services/key_providers/base"
+require_relative "../app/services/key_providers/aws_kms_client"
+require_relative "../app/services/key_providers/external_kms"
+
+region = ENV["AWS_REGION"].to_s
+region = ENV["AWS_DEFAULT_REGION"].to_s if region.empty?
+key_id = ENV["AWS_KMS_KEY_ID"].to_s
+
+abort "AWS_KMS_LIVE_SMOKE=SKIP reason=missing-region" if region.empty?
+abort "AWS_KMS_LIVE_SMOKE=SKIP reason=missing-key-id" if key_id.empty?
+
+client = KeyProviders::AwsKmsClient.new(region: region)
+provider = KeyProviders::ExternalKms.new(
+  provider_name: "aws_kms",
+  active_key_id: key_id,
+  client: client
+)
+
+context = {
+  user_id: "kms-live-smoke-user",
+  vault_item_id: "kms-live-smoke-item",
+  vault_item_version_id: "kms-live-smoke-version"
+}
+
+provider.verify_key!
+puts "AWS_KMS_VERIFY_KEY=PASS"
+
+dek = OpenSSL::Random.random_bytes(32)
+wrapped = provider.wrap_key(dek: dek, context: context)
+abort "AWS_KMS_WRAP=FAIL" if wrapped.empty?
+puts "AWS_KMS_WRAP=PASS"
+
+unwrapped = provider.unwrap_key(
+  wrapped_key: wrapped,
+  key_id: key_id,
+  context: context
+)
+abort "AWS_KMS_UNWRAP=FAIL" unless unwrapped == dek
+puts "AWS_KMS_UNWRAP=PASS"
+
+begin
+  provider.unwrap_key(
+    wrapped_key: wrapped,
+    key_id: key_id,
+    context: context.merge(vault_item_version_id: "wrong-version")
+  )
+  abort "AWS_KMS_WRONG_CONTEXT=FAIL accepted"
+rescue Crypto::Error => error
+  forbidden = %w[credential token secret endpoint access_key]
+  message = error.message.downcase
+  abort "AWS_KMS_ERROR_REDACTION=FAIL" if forbidden.any? { |word| message.include?(word) }
+  puts "AWS_KMS_WRONG_CONTEXT=PASS"
+  puts "AWS_KMS_ERROR_REDACTION=PASS"
+end
+
+puts "AWS_KMS_LIVE_SMOKE=PASS"

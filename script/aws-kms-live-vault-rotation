@@ -1,0 +1,142 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "bundler/setup"
+require "securerandom"
+require_relative "../config/environment"
+require_relative "../app/services/key_providers/aws_kms_client"
+require_relative "../app/services/key_providers/external_kms"
+
+region = ENV["AWS_REGION"].presence || ENV["AWS_DEFAULT_REGION"].to_s
+key01 = ENV.fetch("AWS_KMS_KEY01_ID")
+key02 = ENV.fetch("AWS_KMS_KEY02_ID")
+abort "AWS_KMS_VAULT_ROTATION=FAIL reason=same-key" if key01 == key02
+
+client = KeyProviders::AwsKmsClient.new(region: region)
+old_provider = KeyProviders::ExternalKms.new(
+  provider_name: "aws_kms",
+  active_key_id: key01,
+  client: client
+)
+new_provider = KeyProviders::ExternalKms.new(
+  provider_name: "aws_kms",
+  active_key_id: key02,
+  client: client
+)
+
+old_provider.verify_key!
+new_provider.verify_key!
+puts "AWS_KMS_VAULT_KEYS_VERIFY=PASS"
+
+begin
+user = User.create!(
+  email_address: "kms-rotation-#{SecureRandom.hex(6)}@example.test",
+  password: "kms-live-acceptance-password-1234",
+  password_confirmation: "kms-live-acceptance-password-1234"
+)
+
+expected_title = "kms-live-rotation"
+expected_password = "synthetic-acceptance-secret"
+
+item = Vault::CreateItem.call(
+  user: user,
+  kind: "login",
+  payload: {
+    "schema" => "vault.login.v1",
+    "title" => expected_title,
+    "password" => expected_password
+  },
+  key_provider: old_provider
+)
+
+version = item.current_version
+old_ciphertext = version.ciphertext.dup
+old_wrapped = version.wrapped_dek.dup
+context = {
+  user_id: user.id,
+  vault_item_id: item.id,
+  vault_item_version_id: version.id
+}
+old_dek_before = old_provider.unwrap_key(
+  wrapped_key: old_wrapped,
+  key_id: key01,
+  context: context
+)
+puts "AWS_KMS_VAULT_PRE_ROTATION=PASS"
+KeyRegistry.create!(
+  provider: "aws_kms",
+  kek_id: key01,
+  status: "active",
+  activated_at: Time.current
+)
+
+previous_active = Rails.configuration.x.vault.active_kek_id
+Rails.configuration.x.vault.active_kek_id = key02
+
+registry_singleton = KeyProviders::Registry.singleton_class
+registry_singleton.alias_method :fetch_without_live_aws_kms, :fetch
+registry_singleton.define_method(:fetch) { |*_args| new_provider }
+
+result = Vault::RotateKeys.call(from: key01, to: key02)
+
+version.reload
+abort "AWS_KMS_VAULT_ROTATED_COUNT=FAIL" unless result.rotated >= 1
+abort "AWS_KMS_VAULT_VERIFIED_COUNT=FAIL" unless result.verified >= 1
+puts "AWS_KMS_VAULT_ROTATION_SERVICE=PASS"
+
+abort "AWS_KMS_VAULT_CIPHERTEXT_PRESERVED=FAIL" unless version.ciphertext == old_ciphertext
+puts "AWS_KMS_VAULT_CIPHERTEXT_PRESERVED=PASS"
+
+abort "AWS_KMS_VAULT_WRAPPED_DEK_CHANGED=FAIL" if version.wrapped_dek == old_wrapped
+puts "AWS_KMS_VAULT_WRAPPED_DEK_CHANGED=PASS"
+
+abort "AWS_KMS_VAULT_KEK_ID=FAIL" unless version.kek_id == key02
+puts "AWS_KMS_VAULT_KEK_ID=PASS"
+payload = Vault::RevealItem.call(
+  user: user,
+  item: item.reload,
+  key_provider: new_provider,
+  audit: false
+)
+unless payload["title"] == expected_title && payload["password"] == expected_password
+  abort "AWS_KMS_VAULT_REVEAL=FAIL"
+end
+puts "AWS_KMS_VAULT_REVEAL=PASS"
+
+historical_dek = old_provider.unwrap_key(
+  wrapped_key: old_wrapped,
+  key_id: key01,
+  context: context
+)
+unless ActiveSupport::SecurityUtils.secure_compare(old_dek_before, historical_dek)
+  abort "AWS_KMS_VAULT_HISTORICAL_DECRYPT=FAIL"
+end
+puts "AWS_KMS_VAULT_HISTORICAL_DECRYPT=PASS"
+
+old_registry = KeyRegistry.find_by!(provider: "aws_kms", kek_id: key01)
+new_registry = KeyRegistry.find_by!(provider: "aws_kms", kek_id: key02)
+unless old_registry.status == "decrypt_only" && new_registry.status == "active"
+  abort "AWS_KMS_VAULT_REGISTRY_STATE=FAIL"
+end
+puts "AWS_KMS_VAULT_REGISTRY_STATE=PASS"
+started = AuditEvent.where(action: "key.rotation_started").exists?
+completed = AuditEvent.where(action: "key.rotation_completed").exists?
+abort "AWS_KMS_VAULT_AUDIT=FAIL" unless started && completed
+puts "AWS_KMS_VAULT_AUDIT=PASS"
+
+puts "AWS_KMS_VAULT_ROTATION_LIVE=PASS"
+rescue StandardError => error
+  warn "AWS_KMS_VAULT_ROTATION_LIVE=FAIL error_class=#{error.class.name}"
+  exit 1
+ensure
+  if defined?(registry_singleton) && registry_singleton
+    if registry_singleton.method_defined?(:fetch_without_live_aws_kms)
+      registry_singleton.alias_method :fetch, :fetch_without_live_aws_kms
+      registry_singleton.remove_method :fetch_without_live_aws_kms
+    end
+  end
+  if defined?(previous_active) && previous_active
+    Rails.configuration.x.vault.active_kek_id = previous_active
+  end
+  old_dek_before = historical_dek = nil
+end

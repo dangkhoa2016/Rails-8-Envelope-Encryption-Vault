@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+chmod 700 "$tmp"
+
+summary="${AWS_KMS_FRESH_HOST_SUMMARY_OUT:-$ROOT/tmp/release-artifacts/AWS-KMS-FRESH-HOST-SUMMARY.json}"
+secret_file="${AWS_KMS_SECRET_FILE:-}"
+normalized_secret=""
+
+cd "$ROOT"
+
+if [[ -n "$secret_file" ]]; then
+  [[ "$secret_file" == /* ]] || { echo "AWS_KMS_SECRET_INTAKE=FAIL reason=absolute-path-required" >&2; exit 2; }
+  input_mode="$(stat -c '%a' "$secret_file" 2>/dev/null || stat -f '%Lp' "$secret_file")"
+  if [[ "$input_mode" != "600" && "$input_mode" != "400" && "${AWS_KMS_FIX_SECRET_MODE:-0}" != "1" ]]; then
+    echo "AWS_KMS_SECRET_INTAKE=FAIL reason=unsafe-input-mode" >&2
+    exit 2
+  fi
+
+  normalized_secret="$tmp/aws-kms-secret.normalized.env"
+  prepare_args=()
+  [[ "${AWS_KMS_FIX_SECRET_MODE:-0}" == "1" ]] && prepare_args+=(--fix-input-mode)
+  REQUIRED_SECRET_VARS='AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION AWS_KMS_KEY_ID AWS_KMS_KEY01_ID AWS_KMS_KEY02_ID'     ./script/prepare-secret-env "${prepare_args[@]}" "$secret_file" "$normalized_secret"
+  ./script/aws-kms-secret-preflight "$normalized_secret"
+  set -a
+  # shellcheck disable=SC1090
+  source "$normalized_secret"
+  set +a
+  echo "AWS_KMS_SECRET_INTAKE=PASS"
+elif [[ "${AWS_KMS_FRESH_HOST_REQUIRE_LIVE:-0}" == "1" ]]; then
+  echo "AWS_KMS_SECRET_INTAKE=FAIL reason=secret-file-required-for-live" >&2
+  exit 2
+else
+  echo "AWS_KMS_SECRET_INTAKE=SKIP"
+fi
+
+secret_intake_status="$([[ -n "$secret_file" ]] && printf pass || printf skip)"
+live_ready="no"
+set +e
+readiness_output="$(./script/aws-kms-readiness 2>&1)"
+readiness_rc=$?
+set -e
+if [[ "$readiness_rc" -eq 0 ]]; then
+  live_ready="yes"
+fi
+
+mkdir -p "$(dirname "$summary")"
+
+if [[ "$live_ready" == "yes" ]]; then
+  ./script/aws-kms-live-smoke
+  live_smoke="pass"
+else
+  live_smoke="pending"
+fi
+
+RAILS_ENV=test bin/rails runner '
+  require "openssl"
+  require Rails.root.join("test/support/fake_kms_client").to_s
+  keys = {
+    "fresh-host-old" => OpenSSL::Random.random_bytes(32),
+    "fresh-host-new" => OpenSSL::Random.random_bytes(32)
+  }
+  client = TestSupport::FakeKmsClient.new(keys: keys)
+  old_provider = KeyProviders::ExternalKms.new(provider_name: "aws_kms", active_key_id: "fresh-host-old", client: client)
+  new_provider = KeyProviders::ExternalKms.new(provider_name: "aws_kms", active_key_id: "fresh-host-new", client: client)
+  context = { user_id: "fresh-host", vault_item_id: "kms", vault_item_version_id: "1" }
+  dek = OpenSSL::Random.random_bytes(32)
+  wrapped = old_provider.wrap_key(dek: dek, context: context)
+  recovered = old_provider.unwrap_key(wrapped_key: wrapped, key_id: "fresh-host-old", context: context)
+  raise "synthetic decrypt mismatch" unless ActiveSupport::SecurityUtils.secure_compare(dek, recovered)
+  rewrapped = new_provider.wrap_key(dek: recovered, context: context)
+  verified = new_provider.unwrap_key(wrapped_key: rewrapped, key_id: "fresh-host-new", context: context)
+  raise "synthetic rewrap mismatch" unless ActiveSupport::SecurityUtils.secure_compare(dek, verified)
+  historical = old_provider.unwrap_key(wrapped_key: wrapped, key_id: "fresh-host-old", context: context)
+  raise "historical decrypt mismatch" unless ActiveSupport::SecurityUtils.secure_compare(dek, historical)
+  puts "AWS_KMS_FRESH_HOST_SYNTHETIC=PASS"
+'
+
+LIVE_READY="$live_ready" LIVE_SMOKE="$live_smoke" READINESS_RC="$readiness_rc" SECRET_INTAKE_STATUS="$secret_intake_status" python3 - "$summary" <<'PY'
+import json, os, sys
+from datetime import datetime, timezone
+from pathlib import Path
+out=Path(sys.argv[1])
+data={
+  "schema_version": 1,
+  "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+  "synthetic_rehearsal": "pass",
+  "historical_decrypt": "pass",
+  "rewrap": "pass",
+  "live_aws_ready": os.environ["LIVE_READY"],
+  "live_smoke": os.environ["LIVE_SMOKE"],
+  "readiness_exit": int(os.environ["READINESS_RC"]),
+  "secret_intake": os.environ["SECRET_INTAKE_STATUS"],
+  "credential_values_recorded": False,
+  "key_ids_recorded": False,
+}
+out.write_text(json.dumps(data, sort_keys=True, indent=2)+"\n")
+PY
+
+if [[ "${AWS_KMS_FRESH_HOST_REQUIRE_LIVE:-0}" == "1" && "$live_smoke" != "pass" ]]; then
+  echo "AWS_KMS_FRESH_HOST_LIVE_REQUIRED=FAIL" >&2
+  exit 1
+fi
+
+echo "AWS_KMS_FRESH_HOST_SYNTHETIC=PASS"
+echo "AWS_KMS_FRESH_HOST_LIVE_STATUS=$live_smoke"
+echo "AWS_KMS_FRESH_HOST_SUMMARY=$summary"

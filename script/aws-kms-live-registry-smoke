@@ -1,0 +1,61 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "securerandom"
+require_relative "../config/environment"
+
+begin
+abort "AWS_KMS_REGISTRY_SMOKE=FAIL provider" unless KeyProviders::Registry.configured_name.to_s == "aws_kms"
+
+provider = KeyProviders::Registry.fetch
+abort "AWS_KMS_REGISTRY_SMOKE=FAIL provider-class" unless provider.is_a?(KeyProviders::ExternalKms)
+abort "AWS_KMS_REGISTRY_SMOKE=FAIL provider-name" unless provider.provider_name == "aws_kms"
+
+provider.verify_key!
+puts "AWS_KMS_REGISTRY_VERIFY=PASS"
+
+expected_title = "registry-live-smoke"
+expected_password = "synthetic-registry-secret"
+
+user = User.create!(
+  email_address: "kms-registry-#{SecureRandom.hex(6)}@example.test",
+  password: "registry-live-acceptance-password-1234",
+  password_confirmation: "registry-live-acceptance-password-1234"
+)
+item = Vault::CreateItem.call(
+  user: user,
+  kind: "login",
+  payload: {
+    "schema" => "vault.login.v1",
+    "title" => expected_title,
+    "password" => expected_password
+  }
+)
+
+version = item.current_version
+abort "AWS_KMS_REGISTRY_WRITE=FAIL key-provider" unless version.key_provider == "aws_kms"
+abort "AWS_KMS_REGISTRY_WRITE=FAIL kek-id" unless version.kek_id == provider.active_key_id
+puts "AWS_KMS_REGISTRY_WRITE=PASS"
+
+payload = Vault::RevealItem.call(
+  user: user,
+  item: item.reload,
+  audit: false
+)
+unless payload["title"] == expected_title && payload["password"] == expected_password
+  abort "AWS_KMS_REGISTRY_REVEAL=FAIL"
+end
+puts "AWS_KMS_REGISTRY_REVEAL=PASS"
+
+caps = provider.capabilities
+unless caps[:remote_kek] && caps[:opaque_wrapped_dek] && caps[:encryption_context] && !caps[:local_kek_export]
+  abort "AWS_KMS_REGISTRY_CAPABILITIES=FAIL"
+end
+puts "AWS_KMS_REGISTRY_CAPABILITIES=PASS"
+
+puts "AWS_KMS_REGISTRY_SMOKE=PASS"
+rescue StandardError => error
+  warn "AWS_KMS_REGISTRY_SMOKE=FAIL error_class=#{error.class.name}"
+  exit 1
+
+end
