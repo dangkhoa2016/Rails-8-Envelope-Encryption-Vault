@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: script/verify-postpromote-recovery-set \
+  --archive /absolute/FULL-PRIVATE.tar.gz.age \
+  --recovery-set-dir /absolute/output-dir
+USAGE
+  exit 64
+}
+
+archive=""
+set_dir=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --archive) archive="${2:-}"; shift 2 ;;
+    --recovery-set-dir) set_dir="${2:-}"; shift 2 ;;
+    -h|--help) usage ;;
+    *) usage ;;
+  esac
+done
+
+[[ "$archive" == /* && "$archive" != "/" && -f "$archive" && -r "$archive" ]] || {
+  echo "RECOVERY_SET_VERIFY=FAIL reason=invalid-archive" >&2
+  exit 2
+}
+[[ "$set_dir" == /* && "$set_dir" != "/" && -d "$set_dir" ]] || {
+  echo "RECOVERY_SET_VERIFY=FAIL reason=invalid-set-dir" >&2
+  exit 2
+}
+
+archive_base="$(basename "$archive")"
+archive_sha="$set_dir/$archive_base.sha256"
+evidence="$set_dir/RECOVERY-KEY-CUSTODY.json"
+
+[[ -f "$archive_sha" && -f "$evidence" ]] || {
+  echo "RECOVERY_SET_VERIFY=FAIL reason=missing-required-artifact" >&2
+  exit 2
+}
+
+python3 - "$evidence" "$archive_base" <<'PY' > "$set_dir/.recovery-set-fields"
+import json,sys
+d=json.load(open(sys.argv[1],encoding="utf-8"))
+if d.get("schema_version") != 1 or d.get("status") != "pass":
+    raise SystemExit("RECOVERY_SET_VERIFY=FAIL reason=invalid-evidence")
+if d.get("archive_basename") != sys.argv[2]:
+    raise SystemExit("RECOVERY_SET_VERIFY=FAIL reason=archive-basename-mismatch")
+if d.get("raw_fresh_key_in_output") is not False:
+    raise SystemExit("RECOVERY_SET_VERIFY=FAIL reason=raw-key-flag")
+for k in ("credential_values_recorded","private_key_contents_recorded","plaintext_recorded"):
+    if d.get(k) is not False:
+        raise SystemExit(f"RECOVERY_SET_VERIFY=FAIL reason=unsafe-evidence-{k}")
+for k in ("fresh_key_basename","fresh_key_sha256","wrapped_key_basename","wrapped_key_sha256","baseline_recipient_basename","archive_sha256"):
+    v=d.get(k)
+    if not isinstance(v,str) or not v:
+        raise SystemExit(f"RECOVERY_SET_VERIFY=FAIL reason=missing-{k}")
+print(d["fresh_key_basename"])
+print(d["fresh_key_sha256"])
+print(d["wrapped_key_basename"])
+print(d["wrapped_key_sha256"])
+print(d["baseline_recipient_basename"])
+print(d["archive_sha256"])
+PY
+
+mapfile -t fields < "$set_dir/.recovery-set-fields"
+rm -f "$set_dir/.recovery-set-fields"
+fresh_base="${fields[0]}"
+fresh_sha_expected="${fields[1]}"
+wrapped_base="${fields[2]}"
+wrapped_sha_expected="${fields[3]}"
+recipient_base="${fields[4]}"
+archive_sha_expected="${fields[5]}"
+
+wrapped="$set_dir/$wrapped_base"
+wrapped_sha="$wrapped.sha256"
+fresh_sha="$set_dir/$fresh_base.sha256"
+recipient="$set_dir/$recipient_base"
+
+for p in "$wrapped" "$wrapped_sha" "$fresh_sha" "$recipient"; do
+  [[ -f "$p" && -r "$p" ]] || {
+    echo "RECOVERY_SET_VERIFY=FAIL reason=missing-required-artifact" >&2
+    exit 2
+  }
+done
+
+archive_sidecar_sha="$(awk '{print $1}' "$archive_sha")"
+archive_actual="$(sha256sum "$archive" | awk '{print $1}')"
+[[ "$archive_actual" == "$archive_sidecar_sha" ]] || {
+  echo "RECOVERY_SET_VERIFY=FAIL reason=archive-sha256-mismatch" >&2
+  exit 2
+}
+[[ "$archive_actual" == "$archive_sha_expected" ]] || {
+  echo "RECOVERY_SET_VERIFY=FAIL reason=archive-evidence-mismatch" >&2
+  exit 2
+}
+
+(cd "$set_dir" && sha256sum -c "$(basename "$wrapped_sha")" >/dev/null) || {
+  echo "RECOVERY_SET_VERIFY=FAIL reason=wrapped-key-sha256-mismatch" >&2
+  exit 2
+}
+wrapped_actual="$(sha256sum "$wrapped" | awk '{print $1}')"
+[[ "$wrapped_actual" == "$wrapped_sha_expected" ]] || {
+  echo "RECOVERY_SET_VERIFY=FAIL reason=wrapped-key-evidence-mismatch" >&2
+  exit 2
+}
+
+fresh_sidecar_sha="$(awk '{print $1}' "$fresh_sha")"
+[[ "$fresh_sidecar_sha" == "$fresh_sha_expected" ]] || {
+  echo "RECOVERY_SET_VERIFY=FAIL reason=fresh-key-sha256-evidence-mismatch" >&2
+  exit 2
+}
+
+recipient_value="$(tr -d '\r\n' < "$recipient")"
+[[ "$recipient_value" == age1* ]] || {
+  echo "RECOVERY_SET_VERIFY=FAIL reason=invalid-baseline-recipient" >&2
+  exit 2
+}
+
+[[ ! -e "$set_dir/$fresh_base" ]] || {
+  echo "RECOVERY_SET_VERIFY=FAIL reason=raw-fresh-key-present" >&2
+  exit 2
+}
+
+echo "RECOVERY_SET_ARCHIVE_SHA256=PASS"
+echo "RECOVERY_SET_WRAPPED_KEY_SHA256=PASS"
+echo "RECOVERY_SET_FRESH_KEY_SHA256_METADATA=PASS"
+echo "RECOVERY_SET_RAW_FRESH_KEY_ABSENT=PASS"
+echo "RECOVERY_SET_VERIFY=PASS"
