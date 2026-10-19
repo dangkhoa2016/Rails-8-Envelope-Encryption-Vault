@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+VERSION="${RCLONE_PINNED_VERSION:-1.75.0}"
+
+[[ "$(uname -s)" == "Linux" ]] || { echo "RCLONE_PROVISION=FAIL reason=unsupported-os" >&2; exit 2; }
+case "$(uname -m)" in
+  x86_64|amd64)
+    arch=amd64
+    expected_sha=aa2804e08f48250e71009c727124b6341cd0288465804a9a09d14663cabafbaa
+    ;;
+  aarch64|arm64)
+    arch=arm64
+    expected_sha=d0ad88ba4c8e285b7c9efa591e0ab643280a91741e13c27f3a9c0957ccfa5203
+    ;;
+  *)
+    echo "RCLONE_PROVISION=FAIL reason=unsupported-arch" >&2
+    exit 2
+    ;;
+esac
+
+[[ "$VERSION" == "1.75.0" ]] || {
+  echo "RCLONE_PROVISION=FAIL reason=unsupported-pinned-version" >&2
+  exit 2
+}
+
+for cmd in curl unzip sha256sum; do
+  command -v "$cmd" >/dev/null 2>&1 || { echo "RCLONE_PROVISION=FAIL reason=missing-$cmd" >&2; exit 2; }
+done
+
+runtime_root="${RUNTIME_ROOT:-}"
+if [[ -z "$runtime_root" ]]; then
+  if [[ -d /content && -w /content ]]; then
+    runtime_root=/content/.ruby-envelope-vault-runtime
+  else
+    runtime_root="${XDG_STATE_HOME:-$HOME/.local/state}/ruby-envelope-vault/runtime"
+  fi
+fi
+dest_dir="$runtime_root/bin"
+dest="$dest_dir/rclone"
+mkdir -p "$dest_dir"
+chmod 700 "$dest_dir" 2>/dev/null || true
+
+if [[ -x "$dest" ]]; then
+  if dest_version_output="$("$dest" version 2>/dev/null)"; then
+    dest_version_line="${dest_version_output%%$'\n'*}"
+    if [[ "$dest_version_line" == *"v${VERSION}"* ]]; then
+      echo "RCLONE_PROVISION=PASS status=already-present version=$VERSION"
+      echo "RCLONE_BINARY_SHA256=$(sha256sum "$dest" | awk '{print $1}')"
+      exit 0
+    fi
+  fi
+fi
+
+archive="rclone-v${VERSION}-linux-${arch}.zip"
+url="https://downloads.rclone.org/v${VERSION}/${archive}"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 "$url" -o "$work/$archive"
+actual_sha="$(sha256sum "$work/$archive" | awk '{print $1}')"
+[[ "$actual_sha" == "$expected_sha" ]] || {
+  echo "RCLONE_PROVISION=FAIL reason=archive-sha256-mismatch" >&2
+  exit 2
+}
+
+unzip -q "$work/$archive" -d "$work/unpacked"
+binary="$(find "$work/unpacked" -type f -name rclone -perm -u+x -print -quit)"
+[[ -n "$binary" && -x "$binary" ]] || { echo "RCLONE_PROVISION=FAIL reason=binary-missing-from-archive" >&2; exit 2; }
+if ! binary_version_output="$("$binary" version 2>/dev/null)"; then
+  echo "RCLONE_PROVISION=FAIL reason=version-mismatch" >&2
+  exit 2
+fi
+binary_version_line="${binary_version_output%%$'\n'*}"
+[[ "$binary_version_line" == *"v${VERSION}"* ]] || { echo "RCLONE_PROVISION=FAIL reason=version-mismatch" >&2; exit 2; }
+
+install -m 755 "$binary" "$dest"
+binary_sha="$(sha256sum "$dest" | awk '{print $1}')"
+
+if [[ -n "${RCLONE_PROVISION_EVIDENCE_OUT:-}" ]]; then
+  evidence="$RCLONE_PROVISION_EVIDENCE_OUT"
+  [[ "$evidence" == /* && "$evidence" != "/" ]] || { echo "RCLONE_PROVISION=FAIL reason=evidence-absolute-path-required" >&2; exit 2; }
+  mkdir -p "$(dirname "$evidence")"
+  VERSION="$VERSION" ARCH="$arch" ARCHIVE_SHA="$actual_sha" BINARY_SHA="$binary_sha" python3 - "$evidence" <<'PY'
+import json, os, sys
+from datetime import datetime, timezone
+from pathlib import Path
+out=Path(sys.argv[1])
+data={
+  "schema_version":1,
+  "generated_at":datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+  "status":"pass",
+  "version":os.environ["VERSION"],
+  "platform":"linux-"+os.environ["ARCH"],
+  "archive_sha256":os.environ["ARCHIVE_SHA"],
+  "binary_sha256":os.environ["BINARY_SHA"],
+  "install_scope":"external-runtime",
+  "binary_path_recorded":False,
+  "credential_values_recorded":False,
+  "contains_secret_values":False,
+}
+out.write_text(json.dumps(data,sort_keys=True,indent=2)+"\n")
+out.chmod(0o644)
+PY
+fi
+
+echo "RCLONE_PROVISION=PASS status=installed version=$VERSION"
+echo "RCLONE_BINARY_SHA256=$binary_sha"
