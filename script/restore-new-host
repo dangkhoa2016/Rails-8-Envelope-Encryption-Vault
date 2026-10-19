@@ -1,0 +1,238 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  echo "usage: $0 MIGRATION_BUNDLE.tar.gz" >&2
+  exit 64
+}
+
+[[ $# -eq 1 ]] || usage
+BUNDLE="$(readlink -f "$1")"
+[[ -f "$BUNDLE" ]] || { echo "ERROR bundle not found: $BUNDLE" >&2; exit 1; }
+
+default_install_root() {
+  if [[ -d /kaggle/working && -w /kaggle/working ]]; then
+    printf '%s\n' /kaggle/working/ruby-envelope-vault
+  elif [[ -d /content && -w /content ]]; then
+    printf '%s\n' /content/ruby-envelope-vault
+  else
+    printf '%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}/ruby-envelope-vault"
+  fi
+}
+default_secret_root() {
+  if [[ -d /kaggle/working && -w /kaggle/working ]]; then
+    printf '%s\n' /kaggle/working/ruby-envelope-vault-secrets
+  elif [[ -d /content && -w /content ]]; then
+    printf '%s\n' /content/ruby-envelope-vault-secrets
+  else
+    printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/ruby-envelope-vault-secrets"
+  fi
+}
+INSTALL_ROOT="${NEW_HOST_INSTALL_ROOT:-$(default_install_root)}"
+SECRET_ROOT="${NEW_HOST_SECRET_ROOT:-$(default_secret_root)}"
+REQUESTED_RUNTIME_ROOT="${NEW_HOST_RUNTIME_ROOT:-${RUNTIME_ROOT:-}}"
+SUMMARY_REQUESTED="${NEW_HOST_SUMMARY_OUT:-}"
+PUMA_LOG_REQUESTED="${NEW_HOST_PUMA_LOG:-}"
+PORT="${NEW_HOST_PORT:-3000}"
+REQUESTED_PORT="$PORT"
+HEALTH_URL="${NEW_HOST_HEALTH_URL:-http://127.0.0.1:${PORT}/up}"
+TMUX_SESSION="${NEW_HOST_TMUX_SESSION:-work}"
+TMUX_WINDOW_INDEX="${NEW_HOST_TMUX_WINDOW_INDEX:-6}"
+BOOTSTRAP_MODE="${NEW_HOST_BOOTSTRAP_MODE:-auto}"
+RUN_TESTS="${NEW_HOST_RUN_TESTS:-0}"
+AWS_SECRET_FILE="${NEW_HOST_AWS_SECRET_FILE:-}"
+AWS_FIX_SECRET_MODE="${NEW_HOST_FIX_SECRET_MODE:-0}"
+AWS_NORMALIZED_FILE=""
+AWS_SECRET_INTAKE_STATUS="not-required"
+
+tmp="$(mktemp -d)"
+cleanup(){ rm -rf "$tmp"; }
+trap cleanup EXIT
+
+echo "NEW_HOST_RECOVERY_BEGIN"
+echo "bundle=$BUNDLE"
+if [[ -f "$BUNDLE.sha256" ]]; then
+  ( cd "$(dirname "$BUNDLE")" && sha256sum -c "$(basename "$BUNDLE.sha256")" )
+  echo "BUNDLE_SIDECAR_VERIFY=PASS"
+else
+  echo "BUNDLE_SIDECAR_VERIFY=SKIP"
+fi
+
+mkdir -p "$tmp/unpack"
+tar -C "$tmp/unpack" -xzf "$BUNDLE"
+bundle_dir="$(find "$tmp/unpack" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+[[ -n "$bundle_dir" && -f "$bundle_dir/MANIFEST-SHA256.txt" ]] || { echo "ERROR invalid migration bundle" >&2; exit 1; }
+( cd "$bundle_dir" && sha256sum -c MANIFEST-SHA256.txt >/dev/null )
+echo "BUNDLE_INTERNAL_VERIFY=PASS"
+
+version="$(tr -d '[:space:]' < "$bundle_dir/source/VERSION")"
+release_name="$(printf '%s' "$version" | sed 's/.*-//')"
+release_dir="$INSTALL_ROOT/$release_name"
+
+INSTALL_ROOT="$INSTALL_ROOT" SECRET_ROOT="$SECRET_ROOT" "$bundle_dir/restore-to-linux.sh" >/dev/null
+echo "SOURCE_RESTORE=PASS release=$release_name"
+echo "SECRET_RESTORE=PASS"
+
+install -m 600 "$SECRET_ROOT/source-env.kaggle" "$release_dir/.env.kaggle"
+
+recovered_provider="$(python3 - "$SECRET_ROOT/source-env.kaggle" <<'PY'
+import re, shlex, sys
+provider=""
+for lineno, raw in enumerate(open(sys.argv[1], encoding="utf-8"), start=1):
+    line=raw.strip()
+    if not line or line.startswith("#"):
+        continue
+    try:
+        tokens=shlex.split(line, comments=True, posix=True)
+    except ValueError:
+        raise SystemExit(f"invalid env syntax at line {lineno}")
+    if tokens and tokens[0] == "export":
+        tokens=tokens[1:]
+    if len(tokens) != 1 or "=" not in tokens[0]:
+        continue
+    name, value=tokens[0].split("=",1)
+    if name == "VAULT_KEY_PROVIDER":
+        provider=value
+        break
+print(provider or "local_file")
+PY
+)"
+echo "RECOVERED_KEY_PROVIDER=$recovered_provider"
+
+if [[ "$recovered_provider" == "aws_kms" ]]; then
+  [[ -n "$AWS_SECRET_FILE" ]] || {
+    echo "ERROR NEW_HOST_AWS_SECRET_FILE is required for recovered aws_kms configuration" >&2
+    exit 1
+  }
+  [[ "$AWS_SECRET_FILE" == /* ]] || {
+    echo "ERROR NEW_HOST_AWS_SECRET_FILE must be an absolute path" >&2
+    exit 1
+  }
+
+  input_mode="$(stat -c '%a' "$AWS_SECRET_FILE" 2>/dev/null || stat -f '%Lp' "$AWS_SECRET_FILE")"
+  if [[ "$input_mode" != "600" && "$input_mode" != "400" && "$AWS_FIX_SECRET_MODE" != "1" ]]; then
+    echo "ERROR AWS secret input mode must be 0600/0400 or NEW_HOST_FIX_SECRET_MODE=1" >&2
+    exit 1
+  fi
+
+  chmod u+x "$release_dir/script/prepare-secret-env" "$release_dir/script/aws-kms-secret-preflight"
+  AWS_NORMALIZED_FILE="$SECRET_ROOT/aws-kms-upload.normalized.env"
+  prepare_args=()
+  [[ "$AWS_FIX_SECRET_MODE" == "1" ]] && prepare_args+=(--fix-input-mode)
+  REQUIRED_SECRET_VARS='AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION AWS_KMS_KEY_ID AWS_KMS_KEY01_ID AWS_KMS_KEY02_ID'     "$release_dir/script/prepare-secret-env" "${prepare_args[@]}" "$AWS_SECRET_FILE" "$AWS_NORMALIZED_FILE"
+  "$release_dir/script/aws-kms-secret-preflight" "$AWS_NORMALIZED_FILE"
+  AWS_SECRET_INTAKE_STATUS="pass"
+  echo "AWS_SECRET_INTAKE=PASS"
+  rm -f "$AWS_NORMALIZED_FILE"
+  AWS_NORMALIZED_FILE=""
+  echo "AWS_SECRET_NORMALIZED_COPY=REMOVED"
+fi
+
+chmod u+x "$release_dir/bootstrap.sh" "$release_dir/activate-runtime.sh" "$release_dir/activate-kaggle.sh" 2>/dev/null || true
+find "$release_dir/bin" "$release_dir/script" -maxdepth 1 -type f -exec chmod u+x {} + 2>/dev/null || true
+echo "EXECUTABLE_REPAIR=PASS"
+if [[ "$BOOTSTRAP_MODE" == "auto" ]]; then
+  if [[ -n "$REQUESTED_RUNTIME_ROOT" && -x "$REQUESTED_RUNTIME_ROOT/bin/mise" && -d "$REQUESTED_RUNTIME_ROOT/bundle" && -f "$REQUESTED_RUNTIME_ROOT/postgres/data/PG_VERSION" ]]; then
+    BOOTSTRAP_MODE=start
+  else
+    BOOTSTRAP_MODE=setup
+  fi
+fi
+[[ "$BOOTSTRAP_MODE" == "start" || "$BOOTSTRAP_MODE" == "setup" ]] || { echo "ERROR NEW_HOST_BOOTSTRAP_MODE must be auto|start|setup" >&2; exit 1; }
+
+cd "$release_dir"
+if [[ -n "$REQUESTED_RUNTIME_ROOT" ]]; then
+  RUNTIME_ROOT="$REQUESTED_RUNTIME_ROOT" PORT="$PORT" START_SERVER=0 RUN_TESTS="$RUN_TESTS" ./bootstrap.sh "$BOOTSTRAP_MODE"
+  export RUNTIME_ROOT="$REQUESTED_RUNTIME_ROOT"
+else
+  PORT="$PORT" START_SERVER=0 RUN_TESTS="$RUN_TESTS" ./bootstrap.sh "$BOOTSTRAP_MODE"
+fi
+source ./activate-runtime.sh >/dev/null
+PORT="$REQUESTED_PORT"
+export PORT
+SUMMARY="${SUMMARY_REQUESTED:-$RUNTIME_ROOT/diagnostics/NEW-HOST-RECOVERY-SUMMARY.json}"
+PUMA_LOG="${PUMA_LOG_REQUESTED:-$RUNTIME_ROOT/diagnostics/new-host-puma-${PORT}.log}"
+./script/project-doctor
+echo "PROJECT_DOCTOR=PASS"
+
+window_name="rev-$(printf '%s' "$release_name" | tr '[:upper:]' '[:lower:]')"
+mkdir -p "$(dirname "$PUMA_LOG")" "$release_dir/tmp/pids"
+rm -f "$release_dir/tmp/pids/server-${PORT}.pid"
+rails_cmd="cd $(printf '%q' "$release_dir") && source ./activate-runtime.sh >/dev/null && export PORT=$(printf '%q' "$PORT") && exec bin/rails server -b 127.0.0.1 -p $(printf '%q' "$PORT") -P tmp/pids/server-${PORT}.pid >> $(printf '%q' "$PUMA_LOG") 2>&1"
+if command -v tmux >/dev/null 2>&1; then
+  if ! tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+    tmux new-session -d -s "$TMUX_SESSION" -n "$window_name" "bash -lc $(printf '%q' "$rails_cmd")"
+    if [[ "$TMUX_WINDOW_INDEX" != "0" ]]; then
+      tmux move-window -s "$TMUX_SESSION:0" -t "$TMUX_SESSION:$TMUX_WINDOW_INDEX"
+    fi
+  elif tmux list-windows -t "$TMUX_SESSION" -F '#{window_index}' | grep -Fxq "$TMUX_WINDOW_INDEX"; then
+    tmux rename-window -t "$TMUX_SESSION:$TMUX_WINDOW_INDEX" "$window_name"
+    tmux respawn-pane -k -t "$TMUX_SESSION:$TMUX_WINDOW_INDEX.0" "bash -lc $(printf '%q' "$rails_cmd")"
+  else
+    tmux new-window -d -t "$TMUX_SESSION:$TMUX_WINDOW_INDEX" -n "$window_name" "bash -lc $(printf '%q' "$rails_cmd")"
+  fi
+  echo "RAILS_START_MODE=tmux"
+else
+  nohup bash -lc "$rails_cmd" >/dev/null 2>&1 &
+  echo $! > "$RUNTIME_ROOT/diagnostics/new-host-puma-${PORT}.pid"
+  echo "RAILS_START_MODE=nohup"
+fi
+
+code=000
+for _ in $(seq 1 30); do
+  code="$(curl -sS -o /dev/null -w '%{http_code}' "$HEALTH_URL" 2>/dev/null || true)"
+  [[ "$code" == 200 ]] && break
+  sleep 1
+done
+[[ "$code" == 200 ]] || { echo "ERROR health failed: $code (puma log: $PUMA_LOG)" >&2; tail -n 80 "$PUMA_LOG" >&2 2>/dev/null || true; exit 1; }
+echo "HEALTH=200"
+if command -v tmux >/dev/null 2>&1; then
+  tmux list-panes -t "$TMUX_SESSION:$TMUX_WINDOW_INDEX" -F '#{pane_current_command}' | grep -Eq 'puma|ruby' || {
+    echo "ERROR tmux pane is not running Rails/Puma" >&2
+    exit 1
+  }
+  echo "RAILS_PROCESS_VERIFY=PASS mode=tmux"
+else
+  pidfile="$RUNTIME_ROOT/diagnostics/new-host-puma-${PORT}.pid"
+  pid="$(cat "$pidfile" 2>/dev/null || true)"
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null || {
+    echo "ERROR background Rails process is not running" >&2
+    exit 1
+  }
+  echo "RAILS_PROCESS_VERIFY=PASS mode=nohup"
+fi
+bootstrap_summary="$RUNTIME_ROOT/diagnostics/latest-bootstrap-summary.json"
+mkdir -p "$(dirname "$SUMMARY")"
+VERSION="$version" RELEASE_NAME="$release_name" RELEASE_DIR="$release_dir" INSTALL_ROOT="$INSTALL_ROOT" SECRET_ROOT="$SECRET_ROOT" RUNTIME_ROOT="$RUNTIME_ROOT" BOOTSTRAP_MODE="$BOOTSTRAP_MODE" HEALTH_CODE="$code" BOOTSTRAP_SUMMARY="$bootstrap_summary" RECOVERED_PROVIDER="$recovered_provider" AWS_SECRET_INTAKE_STATUS="$AWS_SECRET_INTAKE_STATUS" python3 - "$SUMMARY" <<'PY'
+import json, os, sys
+from datetime import datetime, timezone
+from pathlib import Path
+out=Path(sys.argv[1])
+bs=Path(os.environ["BOOTSTRAP_SUMMARY"])
+bootstrap={}
+if bs.is_file():
+    bootstrap=json.loads(bs.read_text())
+data={
+    "schema_version": 1,
+    "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "release_version": os.environ["VERSION"],
+    "release_name": os.environ["RELEASE_NAME"],
+    "source_restored": True,
+    "secrets_restored": True,
+    "executable_repair": True,
+    "bootstrap_mode": os.environ["BOOTSTRAP_MODE"],
+    "recovered_key_provider": os.environ["RECOVERED_PROVIDER"],
+    "aws_secret_intake": os.environ["AWS_SECRET_INTAKE_STATUS"],
+    "database_reused": bootstrap.get("database_reused"),
+    "postgres_reused": bootstrap.get("postgres_reused"),
+    "redis_reused": bootstrap.get("redis_reused"),
+    "project_doctor": "pass",
+    "health": int(os.environ["HEALTH_CODE"]),
+}
+out.write_text(json.dumps(data, sort_keys=True, indent=2)+"\n")
+out.chmod(0o644)
+PY
+
+echo "NEW_HOST_SUMMARY=PASS path=$SUMMARY"
+echo "NEW_HOST_ACCEPTANCE=PASS version=$version"
+echo "NEW_HOST_RECOVERY_END"
