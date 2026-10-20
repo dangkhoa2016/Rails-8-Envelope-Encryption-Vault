@@ -1,25 +1,48 @@
-# Documentation guide — 1.0.0
+# Documentation guide — Ruby Envelope Vault v1.0.0
 
 > 🌐 Language / Ngôn ngữ: **English** | [Tiếng Việt](README.vi.md)
-The following documents describe the first Ruby Envelope Vault source release, its capabilities and deployment boundaries.
 
-## Start here
+## Find the right starting point
 
-| Reference | English | Tiếng Việt |
+The top-level [README](../README.md) introduces the vault, envelope encryption and safe demo commands. This index is organized by **reader objective** rather than file count.
+
+| Reader / goal | Start here | Continue with |
 | --- | --- | --- |
-| Engineering scope | [Overview](engineering-overview.md) | [Tổng quan](engineering-overview.vi.md) |
-| Architecture | [Architecture](ARCHITECTURE.md) | [Kiến trúc](ARCHITECTURE.vi.md) |
-| Security | [Threat model](THREAT-MODEL.md) | [Mô hình đe dọa](../THREAT-MODEL.vi.md) |
-| Production operation | [Deployment](deployment.md) | [Triển khai](deployment.vi.md) |
-| Reproducibility | [Reproducibility](reproducibility.md) | [Tái lập](reproducibility.vi.md) |
-| Qualification | [Qualification](qualification.md) | [Đánh giá](qualification.vi.md) |
-| Evidence | [Evidence index](evidence-index.md) | [Chỉ mục bằng chứng](evidence-index.vi.md) |
-| Accessibility | [Accessibility](ACCESSIBILITY.md) | [Tiếp cận](ACCESSIBILITY.vi.md) |
-| Accessibility test plan | [Test plan](ACCESSIBILITY-TEST-PLAN.md) | [Kế hoạch thử](ACCESSIBILITY-TEST-PLAN.vi.md) |
-| Troubleshooting | [Troubleshooting](troubleshooting.md) | [Khắc phục sự cố](troubleshooting.vi.md) |
-| Publication | [Qualification matrix](qualification.md) | [Ma trận kiểm chứng](qualification.vi.md) |
-| Source release checklist | [Production checklist](PRODUCTION-CHECKLIST.md) | [Checklist production](PRODUCTION-CHECKLIST.vi.md) |
+| First-time evaluator | [Main README](../README.md) | [Engineering overview](engineering-overview.md) |
+| Security reviewer | [Threat model](THREAT-MODEL.md) | [Key management](KEY-MANAGEMENT.md), [Architecture](ARCHITECTURE.md) |
+| Application developer | [Architecture](ARCHITECTURE.md) | [Reproducibility](reproducibility.md), [Troubleshooting](troubleshooting.md) |
+| Demo operator | [Notebook setup](KAGGLE-SETUP.md) | [Accessibility](ACCESSIBILITY.md) |
+| Production operator | [Deployment](deployment.md) | [Production checklist](PRODUCTION-CHECKLIST.md) |
+| DR reviewer | [Backup and restore](BACKUP-RESTORE.md) | [Recovery provenance](RECOVERY-PROVENANCE.md) |
+| Release reviewer | [Qualification matrix](qualification.md) | [Evidence index](evidence-index.md), [Production checklist](PRODUCTION-CHECKLIST.md) |
 
-## Other project references
+## Architecture and engineering
 
-[README](../README.md) · [Key management](../KEY-MANAGEMENT.md) · [Backup and restore](../BACKUP-RESTORE.md) · [Changelog](../CHANGELOG.md) · [Contributing](../.github/CONTRIBUTING.md).
+- [Architecture](ARCHITECTURE.md): browser/Rails/database/KeyProvider boundaries and envelope lifecycle.
+- [Engineering overview](engineering-overview.md): component map, service responsibilities and operational decisions.
+- [Threat model](THREAT-MODEL.md): attackers, secrets, controls and excluded guarantees.
+- [Key management](KEY-MANAGEMENT.md): KEK generation, rotation, rollback and independent custody.
+
+## Setup, operations and disaster recovery
+
+- [Notebook setup](KAGGLE-SETUP.md): ephemeral Kaggle/Colab bootstrap with synthetic data.
+- [Deployment guide](deployment.md): environment separation, preflight and explicit host acceptance.
+- [Production checklist](PRODUCTION-CHECKLIST.md): go-live safeguards and operator responsibilities.
+- [Backup and restore](BACKUP-RESTORE.md): age-encrypted dump, checksum, guarded restore and canary.
+- [Recovery provenance](RECOVERY-PROVENANCE.md): recovery evidence expectations.
+- [Troubleshooting](troubleshooting.md): safe diagnosis without disclosing secrets.
+
+## Verification, accessibility and release
+
+- [Reproducibility](reproducibility.md): clean checkout, CI and local test paths.
+- [Qualification matrix](qualification.md): which PASS is source-only versus host-specific.
+- [Evidence index](evidence-index.md): reviewable artifacts, exclusions and reporting template.
+- [Accessibility](ACCESSIBILITY.md) and [manual test plan](ACCESSIBILITY-TEST-PLAN.md): explicit test scope and pending evidence.
+- [Qualification matrix](qualification.md) and [Production checklist](PRODUCTION-CHECKLIST.md): reproducible source evidence and deployment-specific safeguards.
+- [Changelog](CHANGELOG.md), [Security policy](SECURITY.md), [Contribution guide](../.github/CONTRIBUTING.md).
+
+## Security and evidence conventions
+
+Only synthetic credentials belong in examples, public screenshots or issue reports. Document a **source SHA**, not just a version name. If a test was not run, record **PENDING / NOT RUN**; do not turn a green source CI run into a production claim.
+
+Every Markdown document has an English/Vietnamese counterpart and a language switch.
