@@ -7,7 +7,7 @@ ruby ">= 3.4", "< 4.1"
 gem "rails", "8.1.4"
 # Pin the patched DNS resolver separately from the Ruby runtime.
 gem "resolv", ">= 0.7.2"
-gem "pg", "~> 1.6"
+gem "pg", "~> 1.7"
 gem "puma", ">= 5.0"
 gem "propshaft"
 gem "importmap-rails"
