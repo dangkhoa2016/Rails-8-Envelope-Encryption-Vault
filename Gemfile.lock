@@ -283,7 +283,7 @@ GEM
     regexp_parser (2.12.0)
     reline (0.6.3)
       io-console (~> 0.5)
-    resolv (0.7.2)
+    resolv (0.8.1)
     rexml (3.4.4)
     rubocop (1.86.1)
       json (~> 2.3)
