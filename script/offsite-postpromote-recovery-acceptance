@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+
+usage() {
+  echo "usage: $0 --archive FILE --recovery-set-dir DIR --baseline-key FILE --driver filesystem|rclone --dest DEST [--config FILE] [--evidence FILE] [--provision-rclone]" >&2
+  exit 64
+}
+
+archive=""; set_dir=""; baseline_key=""; driver=""; dest=""
+config=""; evidence=""; provision=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --archive) archive="${2:-}"; shift 2 ;;
+    --recovery-set-dir) set_dir="${2:-}"; shift 2 ;;
+    --baseline-key) baseline_key="${2:-}"; shift 2 ;;
+    --driver) driver="${2:-}"; shift 2 ;;
+    --dest) dest="${2:-}"; shift 2 ;;
+    --config) config="${2:-}"; shift 2 ;;
+    --evidence) evidence="${2:-}"; shift 2 ;;
+    --provision-rclone) provision=1; shift ;;
+    -h|--help) usage ;;
+    *) usage ;;
+  esac
+done
+
+for p in "$archive" "$baseline_key"; do
+  [[ "$p" == /* && "$p" != "/" && -f "$p" && -r "$p" ]] || {
+    echo "OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=invalid-file-input" >&2
+    exit 2
+  }
+done
+
+[[ "$set_dir" == /* && "$set_dir" != "/" && -d "$set_dir" ]] || {
+  echo "OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=invalid-recovery-set" >&2
+  exit 2
+}
+[[ -n "$dest" ]] || {
+  echo "OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=missing-destination" >&2
+  exit 2
+}
+
+key_mode="$(stat -c '%a' "$baseline_key" 2>/dev/null || stat -f '%Lp' "$baseline_key")"
+[[ "$key_mode" == "600" || "$key_mode" == "400" ]] || {
+  echo "OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=unsafe-baseline-key-mode" >&2
+  exit 2
+}
+
+"$ROOT/script/verify-postpromote-recovery-set"   --archive "$archive"   --recovery-set-dir "$set_dir" >/dev/null
+echo "OFFSITE_RECOVERY_LOCAL_SET_VERIFY=PASS"
+
+custody="$set_dir/RECOVERY-KEY-CUSTODY.json"
+mapfile -t fields < <(python3 - "$custody" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1],encoding="utf-8"))
+print(d["fresh_key_basename"])
+print(d["fresh_key_sha256"])
+print(d["wrapped_key_basename"])
+print(d["archive_basename"])
+print(d["baseline_recipient_basename"])
+PY
+)
+fresh_base="${fields[0]}"
+fresh_sha_expected="${fields[1]}"
+wrapped_base="${fields[2]}"
+archive_base="${fields[3]}"
+recipient_base="${fields[4]}"
+
+work="$(mktemp -d)"
+download="$work/download"
+extract="$work/extract"
+mkdir -p "$download" "$extract"
+cleanup() { rm -rf "$work"; }
+trap cleanup EXIT
+
+resolver_args=()
+[[ "$provision" == "1" ]] && resolver_args+=(--provision)
+
+copy_up() {
+  local src="$1" name="$2"
+  case "$driver" in
+    filesystem)
+      mkdir -p "$dest"
+      install -m 600 "$src" "$dest/$name"
+      ;;
+    rclone)
+      [[ "$config" == /* && -f "$config" && -r "$config" ]] || {
+        echo "OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=invalid-rclone-config" >&2
+        exit 2
+      }
+      local rb
+      rb="$("$ROOT/script/rclone-resolve" "${resolver_args[@]}")"
+      "$rb" --config "$config" --retries 3 --low-level-retries 3 copyto "$src" "${dest%/}/$name"
+      ;;
+    *)
+      echo "OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=unsupported-driver" >&2
+      exit 2
+      ;;
+  esac
+}
+
+copy_down() {
+  local name="$1" target="$2"
+  case "$driver" in
+    filesystem) cp "$dest/$name" "$target" ;;
+    rclone)
+      local rb
+      rb="$("$ROOT/script/rclone-resolve" "${resolver_args[@]}")"
+      "$rb" --config "$config" --retries 3 --low-level-retries 3 copyto "${dest%/}/$name" "$target"
+      ;;
+  esac
+}
+
+files=(
+  "$archive"
+  "$set_dir/$archive_base.sha256"
+  "$set_dir/$wrapped_base"
+  "$set_dir/$wrapped_base.sha256"
+  "$set_dir/$fresh_base.sha256"
+  "$set_dir/RECOVERY-KEY-CUSTODY.json"
+  "$set_dir/$recipient_base"
+)
+
+for src in "${files[@]}"; do
+  [[ -f "$src" ]] || {
+    echo "OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=missing-upload-artifact" >&2
+    exit 2
+  }
+  copy_up "$src" "$(basename "$src")"
+done
+echo "OFFSITE_RECOVERY_UPLOAD=PASS"
+
+for src in "${files[@]}"; do
+  name="$(basename "$src")"
+  copy_down "$name" "$download/$name"
+done
+echo "OFFSITE_RECOVERY_DOWNLOAD=PASS"
+
+archive_download="$download/$archive_base"
+archive_expected="$(awk '{print $1}' "$download/$archive_base.sha256")"
+archive_actual="$(sha256sum "$archive_download" | awk '{print $1}')"
+[[ "$archive_actual" == "$archive_expected" ]] || {
+  echo "OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=downloaded-archive-sha256-mismatch" >&2
+  exit 2
+}
+echo "OFFSITE_RECOVERY_ARCHIVE_SHA256=PASS"
+
+wrapped_download="$download/$wrapped_base"
+wrapped_expected="$(awk '{print $1}' "$download/$wrapped_base.sha256")"
+wrapped_actual="$(sha256sum "$wrapped_download" | awk '{print $1}')"
+[[ "$wrapped_actual" == "$wrapped_expected" ]] || {
+  echo "OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=downloaded-wrapped-key-sha256-mismatch" >&2
+  exit 2
+}
+echo "OFFSITE_RECOVERY_WRAPPED_KEY_SHA256=PASS"
+
+fresh_key="$work/$fresh_base"
+age -d -i "$baseline_key" -o "$fresh_key" "$wrapped_download"
+chmod 600 "$fresh_key"
+fresh_actual="$(sha256sum "$fresh_key" | awk '{print $1}')"
+[[ "$fresh_actual" == "$fresh_sha_expected" ]] || {
+  echo "OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=recovered-fresh-key-sha256-mismatch" >&2
+  exit 2
+}
+echo "OFFSITE_RECOVERY_FRESH_KEY=PASS"
+
+plain="$work/bundle.tar.gz"
+age -d -i "$fresh_key" -o "$plain" "$archive_download"
+tar -C "$extract" -xzf "$plain"
+rm -f "$plain"
+bundle="$(find "$extract" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+[[ -n "$bundle" && -f "$bundle/meta/MANIFEST-SHA256.txt" ]] || {
+  echo "OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=invalid-recovered-bundle" >&2
+  exit 2
+}
+(cd "$bundle" && sha256sum -c meta/MANIFEST-SHA256.txt >/dev/null)
+echo "OFFSITE_RECOVERY_INTERNAL_MANIFEST=PASS"
+
+dev="$(find "$bundle/source" -mindepth 1 -maxdepth 1 -type d -name 'DEV-*' -print -quit)"
+rc="$(find "$bundle/source" -mindepth 1 -maxdepth 1 -type d -name 'RC-*' -print -quit)"
+rollback="$(find "$bundle/rollback" -mindepth 1 -maxdepth 1 -type d -name 'RC-*' -print -quit)"
+for repo in "$dev" "$rc" "$rollback"; do
+  [[ -n "$repo" && -d "$repo/.git" ]] || {
+    echo "OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=missing-recovered-git" >&2
+    exit 2
+  }
+  git -C "$repo" fsck --full >/dev/null
+done
+echo "OFFSITE_RECOVERY_GIT_FSCK=PASS"
+
+dump="$(find "$bundle/database" -maxdepth 1 -type f -name '*.dump' -print -quit)"
+[[ -n "$dump" ]] || {
+  echo "OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=missing-database-dump" >&2
+  exit 2
+}
+command -v pg_restore >/dev/null || {
+  echo "OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=pg_restore-missing" >&2
+  exit 2
+}
+pg_restore -l "$dump" >/dev/null 2>&1 || {
+  echo "OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=invalid-database-dump" >&2
+  exit 2
+}
+echo "OFFSITE_RECOVERY_DATABASE_CATALOG=PASS"
+
+metadata="$bundle/release-artifacts/RELEASE-METADATA.json"
+[[ -f "$metadata" ]] || {
+  echo "OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=missing-release-metadata" >&2
+  exit 2
+}
+version="$(python3 - "$metadata" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1],encoding="utf-8"))
+if d.get("phase")!="promoted" or d.get("promotion_performed") is not True:
+    raise SystemExit("OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=release-not-promoted")
+for k in ("release_verify","sealed_source_integrity","offhost_roundtrip"):
+    if d.get(k)!="pass":
+        raise SystemExit(f"OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=metadata-{k}")
+print(d.get("release_version",""))
+PY
+)"
+[[ -n "$version" ]] || {
+  echo "OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=missing-release-version" >&2
+  exit 2
+}
+echo "OFFSITE_RECOVERY_PROMOTED_METADATA=PASS version=$version"
+
+if [[ -n "$evidence" ]]; then
+  [[ "$evidence" == /* && "$evidence" != "/" ]] || {
+    echo "OFFSITE_RECOVERY_ACCEPTANCE=FAIL reason=evidence-absolute-path-required" >&2
+    exit 2
+  }
+  mkdir -p "$(dirname "$evidence")"
+  DRIVER="$driver" VERSION="$version" ARCHIVE_SHA="$archive_actual" WRAPPED_SHA="$wrapped_actual" FRESH_SHA="$fresh_actual" python3 - "$evidence" <<'PY'
+import json,os,sys
+from datetime import datetime,timezone
+d={
+  "schema_version":1,
+  "generated_at":datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+  "status":"pass",
+  "driver":os.environ["DRIVER"],
+  "release_version":os.environ["VERSION"],
+  "archive_sha256":os.environ["ARCHIVE_SHA"],
+  "wrapped_key_sha256":os.environ["WRAPPED_SHA"],
+  "fresh_key_sha256":os.environ["FRESH_SHA"],
+  "upload":"pass",
+  "download":"pass",
+  "fresh_key_recovery":"pass",
+  "archive_decrypt":"pass",
+  "internal_manifest":"pass",
+  "git_fsck":"pass",
+  "database_catalog":"pass",
+  "promoted_metadata":"pass",
+  "remote_destination_recorded":False,
+  "config_path_recorded":False,
+  "credential_values_recorded":False,
+  "private_key_contents_recorded":False,
+  "plaintext_recorded":False
+}
+open(sys.argv[1],"w",encoding="utf-8").write(json.dumps(d,sort_keys=True,indent=2)+"\n")
+PY
+  chmod 600 "$evidence"
+fi
+
+echo "OFFSITE_RECOVERY_ACCEPTANCE=PASS version=$version driver=$driver"
