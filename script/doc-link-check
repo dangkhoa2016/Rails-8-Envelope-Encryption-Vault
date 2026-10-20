@@ -19,7 +19,7 @@ for f in files:
                 continue
             target=shot_dir/ref.split('/',1)[1]
         else:
-            target=(root/ref).resolve() if f.name=='README.md' else (f.parent/ref).resolve()
+            target=(root/ref).resolve() if f == root/'README.md' else (f.parent/ref).resolve()
         if not target.exists(): errors.append(f'{f.relative_to(root)} -> {ref}')
 if errors:
     print('DOC_LINK_CHECK=FAIL')
