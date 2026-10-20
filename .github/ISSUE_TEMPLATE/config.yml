@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security disclosure / Báo cáo bảo mật
+    url: mailto:i.am@dangkhoa.dev
+    about: Private vulnerability reports only / Chỉ báo cáo lỗ hổng riêng tư
+  - name: Documentation / Tài liệu
+    url: https://github.com/dangkhoa2016/Rails-8-Envelope-Encryption-Vault/blob/main/docs/README.md
+    about: English and Vietnamese guides / Hướng dẫn EN và VI
