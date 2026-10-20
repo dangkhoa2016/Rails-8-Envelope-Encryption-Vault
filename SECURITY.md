@@ -1,26 +1,22 @@
 # Security Policy
 
-## Scope
+## Supported source
 
-Ruby Envelope Vault is a security-sensitive self-hosted application. Do not include real credentials, API keys, KEKs, recovery codes, database URLs, private keys, session cookies, or decrypted payloads in public bug reports.
+The current reviewed source candidate is **0.1.8.3 RC**. It has completed isolated application and security checks, but has **not** been promoted to a live production deployment. Earlier versions documented in the changelog are historical; do not infer current support from their archived release notes.
 
-## Supported version
+## Reporting a vulnerability
 
-Security fixes target the newest tagged release. v0.1.2 is the Kaggle/bootstrap hardening milestone and must still pass `PRODUCTION-CHECKLIST.md` in the actual deployment environment before real-secret use.
+Report security issues privately to the repository maintainer. Do not post access tokens, encryption keys, recovery codes, database URLs, session cookies, real vault content, or vulnerability proofs involving real data in public issues.
 
-## Reporting
+Provide a minimal reproducible example using synthetic credentials and data.
 
-Report a suspected vulnerability privately to the repository owner/maintainer. Include reproduction steps using synthetic data only.
+## Security model
 
-## Cryptographic assumptions
+- Vault versions use authenticated AES-256-GCM encryption with independently generated data-encryption keys.
+- Key-encryption-key custody is separated from the encrypted records stored in PostgreSQL.
+- MFA, rate limiting, reauthentication, access controls and audit trails are additional controls.
+- This is server-side encryption, **not zero knowledge**: a compromised authorized live application can access decryption capability.
 
-- payloads use AES-256-GCM with fresh random DEKs and nonces;
-- DEKs are wrapped by a separate KEK provider;
-- KEKs are not stored in PostgreSQL or Git;
-- TOTP seeds are envelope-encrypted;
-- recovery codes are bcrypt-hashed;
-- application login passwords are bcrypt-hashed and are never reversibly encrypted.
+## Production boundary
 
-## Important limitation
-
-This is server-side envelope encryption, not a zero-knowledge vault. Complete compromise of an authorized live application host may expose decryptable data because that host can use the active key provider.
+A successful isolated test is not permission to store real secrets. A production installation requires real-host TLS, key custody, recovery, offsite backup verification, monitoring and the acceptance gates listed in [PRODUCTION-CHECKLIST.md](PRODUCTION-CHECKLIST.md). See [Publication status](docs/PUBLICATION-STATUS.md) for outstanding RC gates.

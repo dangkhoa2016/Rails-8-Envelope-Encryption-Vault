@@ -17,3 +17,6 @@
 .DS_Store
 /.kaggle-runtime
 /activate-kaggle.sh
+
+__pycache__/
+*.py[cod]
