@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+
+usage() {
+  echo "usage: $0 --dev-root DIR --rc-root DIR --rollback-root DIR --private-authority DIR --release-artifacts DIR --database-dump FILE --baseline-recipient-file FILE --output-dir DIR [--bundle-name NAME]" >&2
+  exit 64
+}
+
+dev_root=""; rc_root=""; rollback_root=""; authority=""; artifacts=""
+dump=""; baseline_recipient=""; output_dir=""; bundle_name=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dev-root) dev_root="${2:-}"; shift 2 ;;
+    --rc-root) rc_root="${2:-}"; shift 2 ;;
+    --rollback-root) rollback_root="${2:-}"; shift 2 ;;
+    --private-authority) authority="${2:-}"; shift 2 ;;
+    --release-artifacts) artifacts="${2:-}"; shift 2 ;;
+    --database-dump) dump="${2:-}"; shift 2 ;;
+    --baseline-recipient-file) baseline_recipient="${2:-}"; shift 2 ;;
+    --output-dir) output_dir="${2:-}"; shift 2 ;;
+    --bundle-name) bundle_name="${2:-}"; shift 2 ;;
+    -h|--help) usage ;;
+    *) usage ;;
+  esac
+done
+
+for d in "$dev_root" "$rc_root" "$rollback_root" "$authority" "$artifacts"; do
+  [[ "$d" == /* && "$d" != "/" && -d "$d" ]] || {
+    echo "FULL_PRIVATE_BUILD=FAIL reason=invalid-directory-input" >&2
+    exit 2
+  }
+done
+for f in "$dump" "$baseline_recipient"; do
+  [[ "$f" == /* && "$f" != "/" && -f "$f" && -r "$f" ]] || {
+    echo "FULL_PRIVATE_BUILD=FAIL reason=invalid-file-input" >&2
+    exit 2
+  }
+done
+[[ "$output_dir" == /* && "$output_dir" != "/" ]] || {
+  echo "FULL_PRIVATE_BUILD=FAIL reason=output-dir-absolute-path-required" >&2
+  exit 2
+}
+
+for repo in "$dev_root" "$rc_root" "$rollback_root"; do
+  [[ -d "$repo/.git" ]] || { echo "FULL_PRIVATE_BUILD=FAIL reason=missing-git-repository" >&2; exit 2; }
+  git -C "$repo" fsck --full >/dev/null
+  [[ -z "$(git -C "$repo" status --short)" ]] || {
+    echo "FULL_PRIVATE_BUILD=FAIL reason=dirty-source tree=$(basename "$repo")" >&2
+    exit 2
+  }
+done
+
+version="$(tr -d '\r\n' < "$rc_root/VERSION")"
+metadata="$artifacts/RELEASE-METADATA.json"
+[[ -f "$metadata" ]] || { echo "FULL_PRIVATE_BUILD=FAIL reason=missing-release-metadata" >&2; exit 2; }
+python3 - "$metadata" "$version" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1],encoding="utf-8"))
+if d.get("release_version") != sys.argv[2]:
+    raise SystemExit("FULL_PRIVATE_BUILD=FAIL reason=release-version-mismatch")
+if d.get("phase") != "promoted" or d.get("promotion_performed") is not True:
+    raise SystemExit("FULL_PRIVATE_BUILD=FAIL reason=release-not-promoted")
+if d.get("release_verify") != "pass" or d.get("sealed_source_integrity") != "pass":
+    raise SystemExit("FULL_PRIVATE_BUILD=FAIL reason=release-evidence-not-pass")
+PY
+
+for cmd in age age-keygen tar sha256sum readlink; do
+  command -v "$cmd" >/dev/null || { echo "FULL_PRIVATE_BUILD=FAIL reason=missing-$cmd" >&2; exit 2; }
+done
+
+if [[ -z "$bundle_name" ]]; then
+  bundle_name="RUBY-ENVELOPE-VAULT-v${version}-POSTPROMOTE-FULL-PRIVATE-$(date -u +%Y%m%dT%H%M%SZ)"
+fi
+[[ "$bundle_name" =~ ^[A-Za-z0-9._-]+$ ]] || {
+  echo "FULL_PRIVATE_BUILD=FAIL reason=invalid-bundle-name" >&2
+  exit 2
+}
+
+mkdir -p "$output_dir"
+chmod 700 "$output_dir"
+work="$(mktemp -d)"
+cleanup() { rm -rf "$work"; }
+trap cleanup EXIT
+
+stage="$work/$bundle_name"
+mkdir -p "$stage/source" "$stage/rollback" "$stage/private-authority" "$stage/database" "$stage/release-artifacts" "$stage/meta"
+
+dev_real="$(readlink -f "$dev_root")"
+rc_real="$(readlink -f "$rc_root")"
+rollback_real="$(readlink -f "$rollback_root")"
+
+mkdir -p "$stage/source/$(basename "$dev_root")"
+mkdir -p "$stage/source/$(basename "$rc_root")"
+mkdir -p "$stage/rollback/$(basename "$rollback_root")"
+cp -a "$dev_real/." "$stage/source/$(basename "$dev_root")/"
+cp -a "$rc_real/." "$stage/source/$(basename "$rc_root")/"
+cp -a "$rollback_real/." "$stage/rollback/$(basename "$rollback_root")/"
+cp -a "$authority/." "$stage/private-authority/"
+cp -a "$artifacts/." "$stage/release-artifacts/"
+cp -a "$dump" "$stage/database/$(basename "$dump")"
+
+dump_sha="$(sha256sum "$dump" | awk '{print $1}')"
+cat > "$stage/meta/WORKSPACE-STATE.txt" <<EOF
+generated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+promotion_status=promoted
+release_version=$version
+database_dump_sha256=$dump_sha
+--- $(basename "$dev_root")
+version=$(tr -d '\r\n' < "$dev_root/VERSION")
+branch=$(git -C "$dev_root" branch --show-current)
+head=$(git -C "$dev_root" rev-parse HEAD)
+dirty=no
+--- $(basename "$rc_root")
+version=$(tr -d '\r\n' < "$rc_root/VERSION")
+branch=$(git -C "$rc_root" branch --show-current)
+head=$(git -C "$rc_root" rev-parse HEAD)
+dirty=no
+--- $(basename "$rollback_root")
+version=$(tr -d '\r\n' < "$rollback_root/VERSION")
+branch=$(git -C "$rollback_root" branch --show-current)
+head=$(git -C "$rollback_root" rev-parse HEAD)
+dirty=no
+EOF
+
+(cd "$stage" && find . -type f ! -path './meta/MANIFEST-SHA256.txt' -print0 | sort -z | xargs -0 sha256sum > meta/MANIFEST-SHA256.txt)
+echo "FULL_PRIVATE_INTERNAL_MANIFEST=PASS"
+
+archive="$output_dir/$bundle_name.tar.gz.age"
+archive_sha="$archive.sha256"
+raw_key="$output_dir/$bundle_name-OUTER-RECOVERY.agekey"
+public_recipient="$output_dir/$bundle_name-PUBLIC-RECIPIENT.txt"
+plain="$work/$bundle_name.tar.gz"
+recovery_set="$output_dir/$bundle_name-RECOVERY-SET"
+
+rm -rf "$recovery_set"
+rm -f "$archive" "$archive_sha" "$raw_key" "$public_recipient" "$plain"
+
+age-keygen -o "$raw_key" >/dev/null 2>&1
+chmod 600 "$raw_key"
+age-keygen -y "$raw_key" > "$public_recipient"
+chmod 600 "$public_recipient"
+
+tar -C "$work" -czf "$plain" "$bundle_name"
+recipient="$(tr -d '\r\n' < "$public_recipient")"
+age -r "$recipient" -o "$archive" "$plain"
+sha256sum "$archive" | sed "s#  .*#  $(basename "$archive")#" > "$archive_sha"
+chmod 600 "$archive" "$archive_sha"
+
+"$ROOT/script/wrap-postpromote-recovery-key"   --fresh-key "$raw_key"   --baseline-recipient-file "$baseline_recipient"   --archive "$archive"   --output-dir "$recovery_set" >/dev/null
+
+"$ROOT/script/verify-postpromote-recovery-set"   --archive "$archive"   --recovery-set-dir "$recovery_set" >/dev/null
+
+raw_key_sha_in_set="$recovery_set/$(basename "$raw_key").sha256"
+cp "$raw_key_sha_in_set" "$output_dir/$bundle_name-OUTER-RECOVERY.agekey.sha256"
+chmod 600 "$output_dir/$bundle_name-OUTER-RECOVERY.agekey.sha256"
+
+python3 - "$output_dir/$bundle_name-BUILD-METADATA.json" "$bundle_name" "$version" "$(basename "$archive")" "$(awk '{print $1}' "$archive_sha")" "$(basename "$raw_key")" "$(awk '{print $1}' "$raw_key_sha_in_set")" "$(basename "$recovery_set")" <<'PY'
+import json,sys
+out,name,version,archive,archive_sha,key,key_sha,recovery_set=sys.argv[1:]
+d={
+  "schema_version":1,"status":"pass","bundle_name":name,"release_version":version,
+  "archive_basename":archive,"archive_sha256":archive_sha,
+  "local_raw_recovery_key_basename":key,"local_raw_recovery_key_sha256":key_sha,
+  "recovery_set_directory":recovery_set,"raw_recovery_key_in_recovery_set":False,
+  "credential_values_recorded":False,"private_key_contents_recorded":False,"plaintext_recorded":False
+}
+open(out,"w",encoding="utf-8").write(json.dumps(d,sort_keys=True,indent=2)+"\n")
+PY
+chmod 600 "$output_dir/$bundle_name-BUILD-METADATA.json"
+
+echo "FULL_PRIVATE_RECOVERY_CUSTODY=PASS"
+echo "FULL_PRIVATE_BUILD=PASS version=$version"
+echo "FULL_PRIVATE_ARCHIVE=$archive"
+echo "FULL_PRIVATE_LOCAL_RECOVERY_KEY=$raw_key"
+echo "FULL_PRIVATE_RECOVERY_SET=$recovery_set"
