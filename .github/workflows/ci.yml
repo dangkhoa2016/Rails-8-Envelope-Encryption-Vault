@@ -1,0 +1,116 @@
+name: CI
+on:
+  push:
+  pull_request:
+
+jobs:
+  scan_ruby:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: .ruby-version
+          bundler-cache: true
+      - run: bundle exec brakeman --no-pager -q
+      - run: bundle exec bundle-audit check --update
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: .ruby-version
+          bundler-cache: true
+      - run: bundle exec rubocop
+      - run: script/repository-policy
+      - run: python3 script/doc-quality-check
+      - run: bash -n bootstrap.sh bin/bootstrap bin/ci bin/docker-entrypoint script/backup-db script/restore-db script/verify-backup script/dr-verify script/dr-rehearsal script/prove-no-plaintext script/project-doctor script/ops-check script/ops-report script/backup-retention script/ops-maintenance script/offsite-roundtrip script/offsite-dr-rehearsal script/kek-recovery-check script/production-acceptance script/scheduled-ops script/install-ops-scheduler script/ops-scheduler-doctor
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ruby_envelope_vault_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ruby_envelope_vault_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      RAILS_ENV: test
+      TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/ruby_envelope_vault_test
+      VAULT_KEY_PROVIDER: local_file
+      VAULT_ACTIVE_KEK_ID: kek-ci-01
+      VAULT_KEK_DIR: ${{ github.workspace }}/.local/keks
+      REQUIRE_MFA: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: .ruby-version
+          bundler-cache: true
+      - name: Install encrypted-recovery test utilities
+        run: sudo apt-get update -qq && sudo apt-get install -y age
+      - name: Create CI KEK
+        run: |
+          mkdir -p .local/keks
+          ruby -ropenssl -e 'File.binwrite(".local/keks/kek-ci-01.key", OpenSSL::Random.random_bytes(32))'
+          chmod 600 .local/keks/kek-ci-01.key
+      - run: script/crypto-self-test
+      - run: script/security-self-test
+      - run: bin/rails zeitwerk:check
+      - run: bin/rails db:prepare
+      - run: bin/rails test
+      - run: bin/rails test:system
+
+  ruby_compatibility:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby-version: ["3.4", "4.0"]
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ruby_envelope_vault_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ruby_envelope_vault_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      RAILS_ENV: test
+      TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/ruby_envelope_vault_test
+      VAULT_KEY_PROVIDER: local_file
+      VAULT_ACTIVE_KEK_ID: kek-ci-01
+      VAULT_KEK_DIR: ${{ github.workspace }}/.local/keks
+      REQUIRE_MFA: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby-version }}
+          bundler-cache: true
+      - name: Create CI KEK
+        run: |
+          mkdir -p .local/keks
+          ruby -ropenssl -e 'File.binwrite(".local/keks/kek-ci-01.key", OpenSSL::Random.random_bytes(32))'
+          chmod 600 .local/keks/kek-ci-01.key
+      - run: bin/rails db:prepare
+      - run: script/crypto-self-test
+      - run: script/security-self-test
+
+  docker_cold_build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - run: docker build --pull --no-cache -t ruby-envelope-vault:ci .
+      - run: docker image inspect ruby-envelope-vault:ci --format 'id={{.Id}} size={{.Size}}'

@@ -39,6 +39,7 @@
 - [Bằng chứng](evidence-index.vi.md): artifact có thể review, giới hạn và mẫu báo cáo.
 - [Accessibility](ACCESSIBILITY.vi.md), [Kế hoạch manual](ACCESSIBILITY-TEST-PLAN.vi.md): phạm vi và điều kiện còn thiếu.
 - [Ma trận kiểm chứng](qualification.vi.md), [Checklist production](PRODUCTION-CHECKLIST.vi.md): bằng chứng kiểm thử và yêu cầu nghiệm thu riêng từng host.
+- [Hướng dẫn cộng đồng](COMMUNITY.vi.md): quy trình đóng góp, hỗ trợ, bảo mật, issue và pull request.
 - [Changelog](CHANGELOG.vi.md), [Bảo mật](SECURITY.vi.md), [Đóng góp](../.github/CONTRIBUTING.vi.md).
 
 ## Quy ước bảo mật và bằng chứng
