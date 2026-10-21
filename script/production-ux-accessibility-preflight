@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+OUT="${UX_ACCESSIBILITY_EVIDENCE_OUT:-$ROOT/tmp/release-artifacts/UX-ACCESSIBILITY-PREFLIGHT.json}"
+LOG="${UX_ACCESSIBILITY_LOG_OUT:-$ROOT/tmp/release-artifacts/UX-ACCESSIBILITY-PREFLIGHT.log}"
+VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
+MANUAL="${UX_ACCESSIBILITY_MANUAL_EVIDENCE_FILE:-$ROOT/tmp/operator-evidence/accessibility-acceptance.json}"
+
+mkdir -p "$(dirname "$OUT")" "$(dirname "$LOG")"
+cd "$ROOT"
+source ./activate-kaggle.sh >/dev/null
+
+bin/rails tailwindcss:build >"$LOG" 2>&1
+bin/rails test test/system/production_ux_accessibility_test.rb >>"$LOG" 2>&1
+
+VERSION="$VERSION" python3 - "$OUT" "$MANUAL" <<'PY'
+import json, os, sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+out=Path(sys.argv[1])
+manual_path=Path(sys.argv[2])
+required_checks=(
+  "screen_reader_walkthrough",
+  "full_keyboard_workflow_judgment",
+  "layered_color_contrast_review",
+  "real_touch_device_usability",
+  "subjective_focus_usability",
+)
+human_checks={key: "pending" for key in required_checks}
+manual_complete=False
+
+if manual_path.is_file():
+    manual=json.loads(manual_path.read_text())
+    if manual.get("release_version") != os.environ["VERSION"]:
+        raise SystemExit("manual accessibility evidence release mismatch")
+    if manual.get("status") != "complete_no_blockers":
+        raise SystemExit("manual accessibility evidence is not complete_no_blockers")
+    if manual.get("claims", {}).get("wcag_conformance") is not False:
+        raise SystemExit("manual accessibility evidence must not claim WCAG conformance")
+    if manual.get("claims", {}).get("manual_accessibility_complete") is not True:
+        raise SystemExit("manual accessibility evidence completion claim is not true")
+    checks=manual.get("human_checks", {})
+    for key in required_checks:
+        if checks.get(key, {}).get("status") != "pass":
+            raise SystemExit(f"manual accessibility check is not pass: {key}")
+        human_checks[key]="pass"
+    if manual.get("defects") not in ([], None):
+        raise SystemExit("manual accessibility evidence contains unresolved defects")
+    manual_complete=True
+
+data={
+  "schema_version": 1,
+  "release_version": os.environ["VERSION"],
+  "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+  "automated_status": "pass",
+  "automated_checks": {
+    "keyboard_focus_traversal": "pass",
+    "visible_focus_treatment": "pass",
+    "validation_error_semantics": "pass",
+    "reflow_200_percent_proxy": "pass",
+    "primary_mobile_target_size": "pass",
+    "reduced_motion_browser_preference": "pass"
+  },
+  "human_checks": human_checks,
+  "manual_evidence_file": manual_path.name if manual_complete else None,
+  "claims": {
+    "wcag_conformance": False,
+    "manual_accessibility_complete": manual_complete
+  }
+}
+out.write_text(json.dumps(data, sort_keys=True, indent=2)+"\n")
+out.chmod(0o644)
+PY
+
+manual_status="$(python3 - "$OUT" <<'PY'
+import json, sys
+from pathlib import Path
+data=json.loads(Path(sys.argv[1]).read_text())
+print("COMPLETE_NO_BLOCKERS" if data["claims"]["manual_accessibility_complete"] else "PENDING")
+PY
+)"
+
+echo "UX_ACCESSIBILITY_PREFLIGHT=PASS evidence=$OUT"
+echo "UX_ACCESSIBILITY_MANUAL_STATUS=$manual_status"
