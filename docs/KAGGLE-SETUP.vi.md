@@ -18,3 +18,7 @@ Trước khi triển khai ra ngoài notebook, đọc [quản lý khóa](KEY-MANA
 ## Kế hoạch notebook
 
 Demo CPU sử dụng cơ sở dữ liệu Rails tạm và dữ liệu giả đã mã hóa. Notebook được công bố sau khi hoàn tất các kiểm tra nguồn và bảo mật.
+
+## Điều kiện runtime CPU
+
+Cần kết nối Internet, ổ đĩa ghi được, tài khoản demo và quyền đọc GitHub khi repository Private.
