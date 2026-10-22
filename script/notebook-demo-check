@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Source-only safety and reproducibility contract for the Kaggle/Colab demo."""
+import json
+import re
+import subprocess
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+NOTEBOOK = ROOT / "notebooks/Ruby_Envelope_Vault_v1_Kaggle_Colab_Full_Demo.ipynb"
+errors = []
+try:
+    payload = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+except (OSError, ValueError) as exc:
+    raise SystemExit(f"NOTEBOOK_DEMO_CHECK=FAIL unable to parse notebook: {exc}")
+
+cells = payload.get("cells", [])
+if payload.get("nbformat") != 4 or len(cells) < 20:
+    errors.append("expected a complete Jupyter v4 demo with at least 20 cells")
+source_chunks = []
+code_count = 0
+for i, cell in enumerate(cells):
+    source = cell.get("source", "")
+    if isinstance(source, list):
+        source = "".join(source)
+    source_chunks.append(source)
+    if cell.get("cell_type") == "code":
+        code_count += 1
+        if cell.get("outputs") or cell.get("execution_count") is not None:
+            errors.append(f"cell {i}: saved execution output or count is forbidden")
+        try:
+            compile(source, f"notebook-cell-{i}", "exec")
+        except SyntaxError as exc:
+            errors.append(f"cell {i}: invalid Python syntax ({exc})")
+
+all_text = "\n".join(source_chunks)
+expected = {
+    "pinned source tag": 'REF = "v1.0.0"',
+    "repo identity": "dangkhoa2016/Rails-8-Envelope-Encryption-Vault",
+    "read-only token": "GH_READ_TOKEN",
+    "safe credential helper": "GIT_ASKPASS",
+    "isolated test umask": "umask 022",
+    "Rails unit/integration tests": "bin/rails test",
+    "Selenium system tests": "bin/rails test:system",
+    "fixture builder": "demo:fixture",
+    "Cloudflare email gate": "--allowed-mail",
+    "prevent public tunnel default": 'ACCESS_EMAIL = ""',
+    "encrypted fixture integrity": "ENCRYPTED_FIXTURES=PASS",
+    "browser health gate": "RAILS_HEALTH=PASS",
+    "screenshot capture": "script/capture-showcase",
+    "showcase packaging": "script/build-public-showcase",
+}
+for name, marker in expected.items():
+    if marker not in all_text:
+        errors.append(f"missing {name}")
+for path in ("bootstrap.sh", "Gemfile.lock", "script/bootstrap-services-lib.sh"):
+    expected_blob = subprocess.run(["git", "-C", str(ROOT), "rev-parse", f"HEAD:{path}"],
+                                   text=True, capture_output=True)
+    if expected_blob.returncode or expected_blob.stdout.strip() not in all_text:
+        errors.append(f"source blob fingerprint missing or inconsistent: {path}")
+if "EXPECTED_SOURCE_BLOBS" not in all_text or "tag_commit" not in all_text:
+    errors.append("tag and fingerprint validation code missing")
+
+if re.search(r"(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|BEGIN (?:RSA|OPENSSH) PRIVATE KEY)", all_text):
+    errors.append("potential embedded credential")
+for rel in ("docs/KAGGLE-SETUP.md", "docs/KAGGLE-SETUP.vi.md"):
+    if not (ROOT / rel).is_file():
+        errors.append(f"missing {rel}")
+if errors:
+    for problem in errors:
+        print("ERROR:", problem)
+    raise SystemExit("NOTEBOOK_DEMO_CHECK=FAIL")
+print(f"NOTEBOOK_DEMO_CHECK=PASS cells={len(cells)} code_cells={code_count} "
+      "pinned_release=verified outputs=clean")

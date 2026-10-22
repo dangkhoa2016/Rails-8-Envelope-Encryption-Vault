@@ -9,7 +9,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Verify the notebook against the v1.0.0 annotated source tag
       - name: Check English/Vietnamese parity and local links
         run: python3 script/doc-quality-check
+      - name: Validate executable notebook source and release pin
+        run: python3 script/notebook-demo-check
       - name: Check published documentation links
         run: bash script/doc-link-check
