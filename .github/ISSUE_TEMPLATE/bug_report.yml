@@ -1,0 +1,29 @@
+name: Bug report / Báo lỗi
+description: Reproducible defect / Lỗi có thể tái hiện
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "Use synthetic data only / Chỉ dùng dữ liệu giả. Never paste keys or private vault data."
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior / Mong đợi và thực tế
+      description: Describe what happened / Mô tả sự cố
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction / Cách tái hiện
+      description: Include exact commands using fake data / Dùng lệnh chính xác với dữ liệu giả
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment / Môi trường
+      placeholder: Ruby, PostgreSQL, OS, commit SHA
+    validations:
+      required: true

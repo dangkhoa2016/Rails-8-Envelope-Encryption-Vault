@@ -1,0 +1,22 @@
+name: Feature request / Đề xuất chức năng
+description: Engineering proposal / Đề xuất kỹ thuật
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Vấn đề cần giải quyết
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach / Giải pháp đề xuất
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Security and compatibility / Bảo mật và tương thích
+      description: Note impacts on KEK, authentication and recovery / Nêu tác động tới KEK, authentication, recovery
