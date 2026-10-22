@@ -14,3 +14,7 @@ Runtime có thư mục ghi dữ liệu riêng ở vùng làm việc Kaggle/Colab
 Chỉ demo bằng dữ liệu giả. Không commit .env.kaggle, database dump, KEK, age identity, token hay nội dung vault thật.
 
 Trước khi triển khai ra ngoài notebook, đọc [quản lý khóa](KEY-MANAGEMENT.vi.md) và [checklist production](PRODUCTION-CHECKLIST.vi.md).
+
+## Kế hoạch notebook
+
+Demo CPU sử dụng cơ sở dữ liệu Rails tạm và dữ liệu giả đã mã hóa. Notebook được công bố sau khi hoàn tất các kiểm tra nguồn và bảo mật.

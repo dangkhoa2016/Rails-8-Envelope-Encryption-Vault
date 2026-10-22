@@ -21,3 +21,7 @@ In a fresh terminal run: source ./activate-runtime.sh
 Never commit .env.kaggle, actual vault data, recovery keys, KEKs,
 database dumps or production credentials. Notebook setup does not
 constitute production deployment acceptance.
+
+## Notebook roadmap
+
+This source-driven CPU demonstration uses a temporary Rails database and synthetic encrypted data. The notebook implementation will be published after its security and source verification contracts are ready.
