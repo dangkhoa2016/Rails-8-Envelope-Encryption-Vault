@@ -1,0 +1,18 @@
+<% is_alert = kind.to_sym == :alert %>
+<div data-controller="flash"
+     data-flash-duration-value="<%= is_alert ? 7000 : 4500 %>"
+     data-action="mouseenter->flash#pause mouseleave->flash#resume focusin->flash#pause focusout->flash#resume"
+     data-turbo-temporary
+     role="<%= is_alert ? "alert" : "status" %>"
+     aria-live="<%= is_alert ? "assertive" : "polite" %>"
+     class="pointer-events-auto flex w-full items-start gap-3 rounded-2xl border <%= is_alert ? "border-rose-400/25" : "border-emerald-400/25" %> bg-slate-900/95 px-4 py-3.5 text-sm text-slate-100 shadow-2xl shadow-black/40 backdrop-blur-xl transition duration-200">
+  <span aria-hidden="true" class="grid h-8 w-8 shrink-0 place-items-center rounded-xl <%= is_alert ? "bg-rose-400/10 text-rose-300" : "bg-emerald-400/10 text-emerald-300" %>"><%= is_alert ? "!" : "✓" %></span>
+  <div class="min-w-0 flex-1">
+    <p class="font-semibold"><%= is_alert ? "Action needs attention" : "Success" %></p>
+    <p class="mt-0.5 break-words text-slate-300"><%= message %></p>
+  </div>
+  <button type="button"
+          aria-label="Dismiss notification"
+          data-action="flash#dismiss"
+          class="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-300">×</button>
+</div>
