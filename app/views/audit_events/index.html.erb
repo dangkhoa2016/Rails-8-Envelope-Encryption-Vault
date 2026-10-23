@@ -14,14 +14,15 @@
           <% end %>
         <% end %>
       </div>
-    <%= form_with url: audit_events_path, method: :get, class: "flex flex-wrap items-end gap-2" do |f| %>
+    <% action_choices = @all_actions.map { |action| { value: action, label: AuditEventPresenter.for(action).title, category: AuditEventPresenter.category_for(action) } } %>
+    <%= form_with url: audit_events_path, method: :get, class: "flex flex-wrap items-end gap-2", data: { controller: "audit-filters", audit_filters_actions_value: action_choices.to_json } do |f| %>
       <div>
         <%= f.label :category, "Category", class: "block text-xs text-slate-500" %>
-        <%= f.select :category, options_for_select([["All categories", ""]] + @available_categories.map { |category| [category, category] }, @category_filter), {}, class: "mt-1 rounded-xl border border-white/10 bg-slate-950 px-3 py-2.5 text-sm" %>
+        <%= f.select :category, options_for_select([["All categories", ""]] + @available_categories.map { |category| [category, category] }, @category_filter), {}, class: "mt-1 rounded-xl border border-white/10 bg-slate-950 px-3 py-2.5 text-sm", data: { audit_filters_target: "category", action: "change->audit-filters#categoryChanged" } %>
       </div>
       <div>
         <%= f.label :event_action, "Action", class: "block text-xs text-slate-500" %>
-        <%= f.select :event_action, options_for_select([["All actions", ""]] + @available_actions.map { |action| [AuditEventPresenter.for(action).title, action] }, @action_filter), {}, class: "mt-1 rounded-xl border border-white/10 bg-slate-950 px-3 py-2.5 text-sm" %>
+        <%= f.select :event_action, options_for_select([["All actions", ""]] + @available_actions.map { |action| [AuditEventPresenter.for(action).title, action] }, @action_filter), {}, class: "mt-1 rounded-xl border border-white/10 bg-slate-950 px-3 py-2.5 text-sm", data: { audit_filters_target: "action" } %>
       </div>
       <%= f.submit "Filter", class: "rounded-xl border border-white/10 px-3 py-2.5 text-sm hover:bg-white/5" %>
       <% if @action_filter.present? || @category_filter.present? %><%= link_to "Clear", audit_events_path, class: "rounded-xl border border-white/10 px-3 py-2.5 text-sm text-slate-400" %><% end %>
