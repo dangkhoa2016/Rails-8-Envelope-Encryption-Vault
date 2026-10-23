@@ -13,6 +13,7 @@ class AuditEventsController < ApplicationController
     @total = result.total
     @total_pages = result.total_pages
     @available_actions = result.available_actions
+    @all_actions = result.all_actions
     @action_filter = result.selected_action
     @available_categories = result.available_categories
     @category_filter = result.selected_category
