@@ -6,6 +6,7 @@ import MobileNavController from "controllers/mobile_nav_controller"
 import FlashController from "controllers/flash_controller"
 import VaultSearchController from "controllers/vault_search_controller"
 import AuditFiltersController from "controllers/audit_filters_controller"
+import FavoriteControlController from "controllers/favorite_control_controller"
 
 application.register("reveal", RevealController)
 application.register("clipboard", ClipboardController)
@@ -14,3 +15,4 @@ application.register("mobile-nav", MobileNavController)
 application.register("flash", FlashController)
 application.register("vault-search", VaultSearchController)
 application.register("audit-filters", AuditFiltersController)
+application.register("favorite-control", FavoriteControlController)

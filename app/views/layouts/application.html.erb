@@ -15,6 +15,12 @@
       <div class="border-b border-amber-300/20 bg-amber-300/10 px-4 py-2 text-center text-xs font-semibold tracking-wide text-amber-100" role="status" data-demo-banner>Demo environment — synthetic data only. Do not enter real secrets.</div>
     <% end %>
     <a href="#main-content" class="sr-only z-[100] rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:outline-none focus:ring-2 focus:ring-indigo-300">Skip to content</a>
+    <div id="toast_notifications"
+         class="pointer-events-none fixed inset-x-4 bottom-4 z-[80] flex flex-col gap-3 sm:inset-x-auto sm:right-6 sm:bottom-6 sm:w-96"
+         aria-label="Notifications">
+      <%= render "shared/toast", message: notice, kind: :notice if notice.present? %>
+      <%= render "shared/toast", message: alert, kind: :alert if alert.present? %>
+    </div>
     <% if Current.user %>
       <div class="min-h-screen lg:grid lg:grid-cols-[260px_minmax(0,1fr)]" data-controller="mobile-nav">
         <aside class="border-b border-white/10 bg-slate-950/95 lg:sticky lg:top-0 lg:h-screen lg:border-b-0 lg:border-r">
@@ -81,18 +87,6 @@
           </header>
 
           <main id="main-content" tabindex="-1" class="mx-auto w-full max-w-7xl px-5 py-7 lg:px-8 lg:py-9">
-            <% if notice %>
-              <div class="fixed right-5 top-20 z-50 flex max-w-md items-start gap-3 rounded-2xl border border-emerald-400/20 bg-slate-900/95 px-4 py-3 text-sm text-emerald-100 shadow-2xl shadow-black/30 backdrop-blur transition duration-200" role="status" aria-live="polite" data-controller="flash">
-                <span class="mt-0.5">✓</span><span class="min-w-0 flex-1"><%= notice %></span>
-                <button type="button" class="text-slate-500 hover:text-white" aria-label="Dismiss notification" data-action="flash#dismiss">×</button>
-              </div>
-            <% end %>
-            <% if alert %>
-              <div class="fixed right-5 top-20 z-50 flex max-w-md items-start gap-3 rounded-2xl border border-rose-400/20 bg-slate-900/95 px-4 py-3 text-sm text-rose-100 shadow-2xl shadow-black/30 backdrop-blur transition duration-200" role="alert" aria-live="assertive" data-controller="flash">
-                <span class="mt-0.5">!</span><span class="min-w-0 flex-1"><%= alert %></span>
-                <button type="button" class="text-slate-500 hover:text-white" aria-label="Dismiss notification" data-action="flash#dismiss">×</button>
-              </div>
-            <% end %>
             <%= yield %>
           </main>
         </div>
@@ -100,8 +94,6 @@
     <% else %>
       <main id="main-content" tabindex="-1" class="mx-auto flex min-h-screen max-w-6xl items-center justify-center px-5 py-10">
         <div class="w-full">
-          <% if notice %><div class="mx-auto mb-5 max-w-lg rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-3 transition duration-200" role="status" aria-live="polite" data-controller="flash"><%= notice %></div><% end %>
-          <% if alert %><div class="mx-auto mb-5 max-w-lg rounded-2xl border border-rose-400/20 bg-rose-400/10 p-3 transition duration-200" role="alert" aria-live="assertive" data-controller="flash"><%= alert %></div><% end %>
           <%= yield %>
         </div>
       </main>
