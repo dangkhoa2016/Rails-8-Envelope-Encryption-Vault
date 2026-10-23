@@ -167,6 +167,8 @@ For exact formats and failure behavior, consult the source under `app/services/c
 
 The supported convenience workflow is designed for **Kaggle, Google Colab and similar Ubuntu/Debian containers** without systemd. Use **synthetic data only**. Installation needs package/network access, sufficient disk space and a writable runtime directory.
 
+**Post-tag UX snapshot:** [Main-commit Kaggle / Colab full demo](notebooks/Ruby_Envelope_Vault_Main_Kaggle_Colab_Full_Demo.ipynb) — pinned to `52314b474b6a0daa389eeca5ed49a386fe33e8a3` for reproducible verification of the reactive Audit filters and in-place Vault search with session-scoped filter URLs. This is a later commit on `main`, **not the unchanged `v1.0.0` release tag**. The [tagged release notebook](notebooks/Ruby_Envelope_Vault_v1_Kaggle_Colab_Full_Demo.ipynb) remains available separately.
+
 **Recommended:** [Full Kaggle / Google Colab demo notebook](notebooks/Ruby_Envelope_Vault_v1_Kaggle_Colab_Full_Demo.ipynb) — pinned `v1.0.0` GitHub source, complete tests, encrypted synthetic fixtures, live Rails UI and Selenium screenshots. See the [bilingual guide](docs/KAGGLE-SETUP.md). This repository is currently Private: an authorized reader needs a read-only `GH_READ_TOKEN` secret.
 
 The notebook **opens a temporary public Cloudflare Quick Tunnel by default, only after Rails becomes healthy**, then displays a clickable browser link without requiring a Cloudflare email OTP. Rails login is still required; use synthetic data, protect the generated demo password and choose `ENABLE_CLOUDFLARE_TUNNEL = False` for localhost-only tests.

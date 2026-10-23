@@ -167,6 +167,8 @@ Các định dạng và lỗi cụ thể nằm trong `app/services/crypto/`, `ap
 
 Quy trình thuận tiện được thiết kế cho **Kaggle, Google Colab và container Ubuntu/Debian tương tự**, không cần systemd. Chỉ sử dụng **dữ liệu giả**. Cần truy cập mạng để cài phụ thuộc, đủ dung lượng đĩa và thư mục runtime có quyền ghi.
 
+**Bản snapshot UX sau tag:** [Notebook Kaggle / Colab cho commit main](notebooks/Ruby_Envelope_Vault_Main_Kaggle_Colab_Full_Demo.ipynb) — ghim SHA `52314b474b6a0daa389eeca5ed49a386fe33e8a3` để kiểm chứng Audit lọc tức thời và Vault Search không tải lại trang, URL tham chiếu bộ lọc nằm trong session. Đây là commit mới hơn trên `main`, **không phải tag phát hành `v1.0.0` đang được giữ nguyên**. [Notebook dành cho tag gốc](notebooks/Ruby_Envelope_Vault_v1_Kaggle_Colab_Full_Demo.ipynb) vẫn được giữ riêng.
+
 **Cách chạy đề xuất:** [Notebook Kaggle / Google Colab Full Demo](notebooks/Ruby_Envelope_Vault_v1_Kaggle_Colab_Full_Demo.ipynb) — chạy nguồn GitHub `v1.0.0`, toàn bộ tests, dữ liệu mã hóa giả, Rails UI và ảnh Selenium. Đọc [hướng dẫn song ngữ](docs/KAGGLE-SETUP.vi.md). Repo hiện Private nên phải có quyền truy cập và secret `GH_READ_TOKEN` chỉ đọc.
 
 Notebook **tự mở Cloudflare Quick Tunnel công khai tạm thời sau khi Rails đã khởi động thành công**, hiển thị URL có thể bấm **không cần email OTP của Cloudflare**. Rails vẫn yêu cầu đăng nhập. Chỉ dùng dữ liệu giả, giữ kín mật khẩu demo; đặt `ENABLE_CLOUDFLARE_TUNNEL = False` để chỉ chạy localhost.

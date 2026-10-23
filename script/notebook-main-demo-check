@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Validate the separate pinned post-release main snapshot notebook."""
+import json
+import re
+import subprocess
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+NOTEBOOK = ROOT / "notebooks/Ruby_Envelope_Vault_Main_Kaggle_Colab_Full_Demo.ipynb"
+COMMIT = "52314b474b6a0daa389eeca5ed49a386fe33e8a3"
+TREE = "228e75efc9620170a1409ac8744293388069ee20"
+errors = []
+
+try:
+    payload = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+except (OSError, ValueError) as exc:
+    raise SystemExit(f"MAIN_NOTEBOOK_CHECK=FAIL could not read notebook: {exc}")
+
+cells = payload.get("cells", [])
+if payload.get("nbformat") != 4 or len(cells) != 23:
+    errors.append("expected the full 23-cell Jupyter v4 notebook")
+
+sources = []
+code_count = 0
+for i, cell in enumerate(cells):
+    src = cell.get("source", "")
+    src = "".join(src) if isinstance(src, list) else src
+    sources.append(src)
+    if cell.get("cell_type") == "code":
+        code_count += 1
+        if cell.get("outputs") or cell.get("execution_count") is not None:
+            errors.append(f"cell {i}: committed notebook output/execution history is forbidden")
+        try:
+            compile(src, f"main-demo-{i}", "exec")
+        except SyntaxError as exc:
+            errors.append(f"cell {i}: invalid Python source: {exc}")
+
+body = chr(10).join(sources)
+required = {
+    "repository": 'REPO_SLUG = "dangkhoa2016/Rails-8-Envelope-Encryption-Vault"',
+    "main branch": 'REF = "main"',
+    "full source pin": f'EXPECTED_SOURCE_COMMIT = "{COMMIT}"',
+    "Git tree pin": f'EXPECTED_SOURCE_TREE = "{TREE}"',
+    "source classification": 'SOURCE_KIND = "PINNED_MAIN_COMMIT"',
+    "secure private clone": "GIT_ASKPASS",
+    "no shallow clone": '"--branch", REF, "--single-branch",',
+    "detached checkout": '"checkout", "--detach", EXPECTED_SOURCE_COMMIT',
+    "branch ancestry": '"merge-base", "--is-ancestor", EXPECTED_SOURCE_COMMIT',
+    "exact commit gate": "if sha != EXPECTED_SOURCE_COMMIT:",
+    "exact tree gate": "if commit_tree != EXPECTED_SOURCE_TREE:",
+    "Git object validation": 'git("fsck", "--full", "--strict", "--no-reflogs", "--no-progress", cwd=REPO)',
+    "clean checkout": 'git("status", "--porcelain", cwd=REPO)',
+    "local PostgreSQL isolation": 'DB_NAME = f"vault_demo_db_{RUN_ID}"',
+    "full Rails tests": "bin/rails test",
+    "Selenium tests": "bin/rails test:system",
+    "test-only umask": "umask 022",
+    "synthetic fixture": "demo:fixture",
+    "Rails readiness": "RAILS_DB_READINESS=PASS",
+    "tunnel health gate": "RAILS_HEALTH=PASS",
+    "private test credentials": "GH_READ_TOKEN",
+    "UI screenshots": "script/capture-showcase",
+    "showcase archive": "script/build-public-showcase",
+}
+for desc, marker in required.items():
+    if marker not in body:
+        errors.append(f"missing {desc}")
+
+clone_cell = sources[4] if len(sources) > 4 else ""
+if '"--depth", "1"' in clone_cell:
+    errors.append("a shallow one-commit main clone would lose the pinned source after later changes")
+if "refs/tags/" in clone_cell or "tag_commit" in clone_cell:
+    errors.append("main commit notebook must not verify itself as the immutable release tag")
+if re.search(r"(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|BEGIN (?:RSA|OPENSSH) PRIVATE KEY)", body):
+    errors.append("notebook contains a potential hard-coded credential")
+if any(x in body for x in ("--allowed-mail", "ACCESS_EMAIL", "Email you control for Cloudflare OTP")):
+    errors.append("obsolete Cloudflare OTP requirement")
+if 'SOURCE_VERIFIED=PASS' not in body or 'SOURCE_TREE_VERIFIED=PASS' not in body:
+    errors.append("required source verification markers missing")
+
+try:
+    source_tree = subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", f"{COMMIT}^{{tree}}"],
+        stderr=subprocess.DEVNULL, text=True
+    ).strip()
+    if source_tree != TREE:
+        errors.append("pinned source SHA does not resolve to the expected Git tree")
+except subprocess.CalledProcessError:
+    errors.append("pinned source commit not present in repository history")
+
+if errors:
+    for item in errors:
+        print("ERROR:", item)
+    raise SystemExit("MAIN_NOTEBOOK_CHECK=FAIL")
+
+print(f"MAIN_NOTEBOOK_CHECK=PASS cells={len(cells)} code_cells={code_count} "
+      f"source={COMMIT[:12]} tree={TREE[:12]} outputs=clean")

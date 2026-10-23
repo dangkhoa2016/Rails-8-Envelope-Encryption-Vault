@@ -15,5 +15,7 @@ jobs:
         run: python3 script/doc-quality-check
       - name: Validate executable notebook source and release pin
         run: python3 script/notebook-demo-check
+      - name: Validate pinned main demo notebook
+        run: python3 script/notebook-main-demo-check
       - name: Check published documentation links
         run: bash script/doc-link-check

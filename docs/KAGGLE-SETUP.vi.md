@@ -6,6 +6,8 @@
 
 **[Mở notebook Kaggle / Colab song ngữ](../notebooks/Ruby_Envelope_Vault_v1_Kaggle_Colab_Full_Demo.ipynb)**
 
+**Chọn phiên bản nguồn:** Notebook chính trong tài liệu này dùng tag phát hành `v1.0.0` đang được giữ nguyên (`b8e7828`). Để chạy các cải tiến UX Audit/Vault mới hơn từ `main`, dùng riêng **[notebook demo snapshot main](../notebooks/Ruby_Envelope_Vault_Main_Kaggle_Colab_Full_Demo.ipynb)**, ghim commit `52314b474b6a0daa389eeca5ed49a386fe33e8a3` và kiểm tra SHA commit/tree. Notebook mới giữ nguyên bootstrap, bộ test đầy đủ, dữ liệu demo giả và khả năng chụp showcase, nhưng xác minh một commit chứ không xác minh annotated tag. Không gán tính năng mới cho tag `v1.0.0`.
+
 Demo chạy trên **CPU**, không cần Docker và lấy mã nguồn trực tiếp từ tag của GitHub. Không cần Kaggle Dataset riêng, database có sẵn hoặc dịch vụ production.
 
 Notebook cài Ruby 3.4.11, Rails 8.1.4, PostgreSQL 17, Redis, tạo KEK LocalFile chỉ dùng trong phiên demo và schema database. Sau đó chạy kiểm tra crypto/security, toàn bộ Rails/Selenium tests, tạo bảy nhóm bản ghi giả đã mã hóa, kiểm tra HTTP, tùy chọn chụp mười ảnh giao diện thật và đóng gói showcase có checksum.
@@ -30,7 +32,7 @@ Notebook cài Ruby 3.4.11, Rails 8.1.4, PostgreSQL 17, Redis, tạo KEK LocalFil
 
 **Dữ liệu demo hiện tại (v1.0.0):** seed tạo **28 item giả đã mã hóa**, mỗi loại trong bảy nhóm có bốn ví dụ, gồm **29 phiên bản mã hóa** và **29 sự kiện audit tạo/cập nhật** nếu chạy trên tài khoản demo sạch. Trang Vault hiển thị **6 item/trang**, đủ năm trang để kiểm thử Previous/Next, bộ lọc loại và tag. Nếu chạy lại mà không đặt `DEMO_RESET`, seed chỉ thêm ví dụ còn thiếu; tài khoản demo cũ có sáu item sẽ được bổ sung 22 item mới. Bảng nghiệm thu bên dưới vẫn giữ số liệu **lịch sử ngày 22/10/2026**, trước khi tăng dữ liệu demo.
 
-**Phân trang GET (Pagy 43):** Vault hiển thị sáu item/trang. Search gửi POST riêng tư và cập nhật danh sách bằng Turbo Stream không reload; khi submit, URL đổi sang `/vault_items?filter=<mã-ngẫu-nhiên>&kind=login&page=1` (các tham số `status`/`favorite` được thêm khi áp dụng). Tiêu đề `q` và tên tag không bao giờ xuất hiện trong URL; chúng được lưu trong phiên Rails mã hóa, tham chiếu bằng mã lọc riêng cho từng lần tìm kiếm (tối đa bốn bộ lọc gần nhất trong cùng phiên). Refresh và liên kết phân trang GET giữ nguyên bộ lọc; khi không có JavaScript, POST → 303 → GET. Audit Log sử dụng mười sự kiện/trang; Category cập nhật danh sách Action ngay lập tức và phân trang GET giữ nguyên bộ lọc. Dùng **Clear filters** để xóa bộ lọc đang áp dụng.
+**Phạm vi tính năng theo phiên bản:** Tag `v1.0.0` dùng POST → HTTP 303 → GET khi tìm kiếm tiêu đề Vault; các liên kết phân trang GET giữ bộ lọc trong Rails session mã hóa, không đưa plaintext tiêu đề lên URL. Snapshot `main` ghim SHA mới hơn sử dụng Turbo Stream để cập nhật kết quả không reload; URL GET có mã tham chiếu `filter` ngẫu nhiên thuộc session, kèm các tham số an toàn `kind`, `status`, `favorite` nếu cần. Tiêu đề và tên tag được bảo vệ ngoài URL. Chỉ ở snapshot mới, Audit Category thay đổi Action ngay lập tức. Không suy diễn tính năng sau tag thành tính năng của `v1.0.0`.
 
 **Giới hạn tin cậy Git:** Các bước kiểm tra xác minh sự nhất quán của checkout/Git object, không chứng minh tính xác thực của release. Tag chưa ký có thể bị thay thế; để xác thực độc lập cần chữ ký release tag với khóa tin cậy hoặc cơ chế tương đương.
 
