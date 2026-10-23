@@ -26,3 +26,7 @@ Cần kết nối Internet, ổ đĩa ghi được, tài khoản demo và quyề
 ## Kiểm soát truy cập trình duyệt
 
 Chỉ mở URL tạm sau khi Rails và database sẵn sàng; chỉ dùng dữ liệu giả và đăng nhập Rails.
+
+## Tìm kiếm và phân trang Vault
+
+Tìm kiếm phải giới hạn theo chủ sở hữu; phân trang dùng GET mà không để lộ từ khóa mã hóa.

@@ -83,11 +83,14 @@ class VaultLifecycleTest < ApplicationSystemTestCase
     click_button "Reveal"
     assert_text "first-fake-secret"
 
-    accept_confirm("Archive this vault item?") { click_button "Archive" }
-    assert_selector "[data-vault-status='archived']", text: "Archived"
+    accept_confirm("Move this item to Archived? Encrypted data and versions are retained; external credentials are not revoked.") { click_button "Archive" }
+    assert_current_path vault_items_path
+    assert_no_selector "[data-vault-status='archived']"
     assert item.reload.archived_at.present?
     assert AuditEvent.exists?(user: user, vault_item: item, action: "vault_item.archived")
 
+    visit vault_items_path(status: "archived")
+    assert_selector "[data-vault-status='archived']", text: "Archived"
     visit vault_item_path(item)
     assert_selector "[data-vault-status='archived']", text: "Archived"
     click_button "Unarchive"

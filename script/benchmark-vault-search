@@ -1,0 +1,42 @@
+#!/usr/bin/env ruby
+# Synthetic only; run via RAILS_ENV=test bin/rails runner script/benchmark-vault-search
+require "benchmark"
+require "securerandom"
+
+abort "BENCHMARK_REFUSED: RAILS_ENV must be test" unless Rails.env.test?
+abort "BENCHMARK_REFUSED: AWS KMS is not used for synthetic local benchmark" if ENV["VAULT_KEY_PROVIDER"] == "aws_kms"
+
+count = Integer(ENV.fetch("VAULT_BENCH_ITEMS", "260"), 10)
+abort "VAULT_BENCH_ITEMS must be 251..1000" unless (251..1000).cover?(count)
+ActiveRecord::Base.transaction do
+  user = User.create!(
+    email_address: "vault-bench-#{SecureRandom.hex(8)}@example.test",
+    password: "synthetic-benchmark-password-123456",
+    password_confirmation: "synthetic-benchmark-password-123456"
+  )
+  puts "BENCHMARK_ITEMS=#{count} PROVIDER=local_file RAILS_ENV=test"
+  setup_seconds = Benchmark.realtime do
+    count.times do |index|
+      Vault::CreateItem.call(user: user, kind: "login", payload: {
+        "schema" => "vault.login.v1",
+        "title" => index == 0 ? "Rare needle for title search" : "Synthetic item #{index}",
+        "username" => "", "password" => "", "url" => "",
+        "notes" => "", "tags" => (index == 0 ? [ "rare-tag" ] : [ "other-tag" ])
+      })
+    end
+  end
+  benchmark = lambda do |label, **args|
+    elapsed = Benchmark.realtime do
+      result = Vault::ListItems.call(user: user, **args)
+      puts "BENCHMARK_#{label.upcase}_TOTAL=#{result.total} PAGE_COUNT=#{result.summaries.length}"
+      abort "BENCHMARK_SEARCH_INCORRECT" if %w[title tag].include?(label) && result.total != 1
+    end
+    puts "BENCHMARK_#{label.upcase}_SECONDS=#{format('%.4f', elapsed)}"
+  end
+  puts "BENCHMARK_SETUP_SECONDS=#{format('%.4f', setup_seconds)}"
+  benchmark.call("listing", page: 1)
+  benchmark.call("title", q: "rare needle")
+  benchmark.call("tag", tag: "rare-tag")
+  raise ActiveRecord::Rollback
+end
+puts "BENCHMARK_TEST_DATA_ROLLBACK=PASS"

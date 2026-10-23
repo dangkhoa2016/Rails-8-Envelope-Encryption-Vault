@@ -65,12 +65,12 @@
     <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
         <h2 id="item-lifecycle-heading" class="text-sm font-semibold text-slate-200">Item lifecycle</h2>
-        <p class="mt-1 text-xs leading-5 text-slate-500"><%= @item.archived_at.present? ? "Restore this item to active vault results." : "Archiving hides the item from active results without deleting encrypted history." %></p>
+        <p class="mt-1 text-xs leading-5 text-slate-500"><%= @item.archived_at.present? ? "This item is retained and accessible in Archived. Unarchive it to return to Active." : "Archive removes the item from the default Active view, not from encrypted storage or version history. It does not revoke external credentials." %></p>
       </div>
       <% if @item.archived_at.present? %>
         <%= button_to "Unarchive", unarchive_vault_item_path(@item), method: :post, class: "rounded-xl border border-emerald-400/20 px-4 py-2.5 text-sm font-medium text-emerald-300 hover:bg-emerald-400/5" %>
       <% else %>
-        <%= button_to "Archive", archive_vault_item_path(@item), method: :post, form: { data: { turbo_confirm: "Archive this vault item?" } }, class: "rounded-xl border border-amber-400/20 px-4 py-2.5 text-sm font-medium text-amber-300 hover:bg-amber-400/5" %>
+        <%= button_to "Archive", archive_vault_item_path(@item), method: :post, form: { data: { turbo_confirm: "Move this item to Archived? Encrypted data and versions are retained; external credentials are not revoked." } }, class: "rounded-xl border border-amber-400/20 px-4 py-2.5 text-sm font-medium text-amber-300 hover:bg-amber-400/5" %>
       <% end %>
     </div>
   </section>

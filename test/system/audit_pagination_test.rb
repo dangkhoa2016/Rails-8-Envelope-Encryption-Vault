@@ -35,4 +35,34 @@ class AuditPaginationTest < ApplicationSystemTestCase
     click_link "Previous"
     assert_text "Page 2 of 3"
   end
+  test "category choice instantly refreshes Action and clears incompatible selection" do
+    user = create_system_user("audit-action-select@example.test")
+    sign_in_system_user(user)
+    AuditEvent.create!(user: user, action: "vault_item.created", metadata: {})
+    AuditEvent.create!(user: user, action: "vault_item.updated", metadata: {})
+    AuditEvent.create!(user: user, action: "user.login_succeeded", metadata: {})
+
+    visit audit_events_path
+    execute_script("window.__auditNoReload = true")
+    select "Vault", from: "Category"
+    assert_selector "select#event_action option[value='vault_item.created']"
+    assert_selector "select#event_action option[value='vault_item.updated']"
+    assert_no_selector "select#event_action option[value='user.login_succeeded']"
+    assert_equal true, evaluate_script("window.__auditNoReload")
+    select "Vault item updated", from: "Action"
+    click_button "Filter"
+    assert_select "Category", selected: "Vault"
+    assert_select "Action", selected: "Vault item updated"
+    assert_selector "[data-audit-action='vault_item.updated']"
+    assert_no_selector "[data-audit-action='vault_item.created']"
+
+    select "Sessions", from: "Category"
+    assert_selector "select#event_action option[value='user.login_succeeded']"
+    assert_no_selector "select#event_action option[value='vault_item.updated']"
+    assert_select "Action", selected: "All actions"
+    select "Signed in", from: "Action"
+    click_button "Filter"
+    assert_select "Category", selected: "Sessions"
+    assert_select "Action", selected: "Signed in"
+  end
 end

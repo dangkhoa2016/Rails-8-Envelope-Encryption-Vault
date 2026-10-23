@@ -2,7 +2,6 @@ module Vault
   class ListItems
     Result = Data.define(:summaries, :page, :per_page, :total, :total_pages, :tags_by_item_id, :available_tags, :pagy)
 
-    MAX_CANDIDATES = 250
     DEFAULT_PER_PAGE = 6
     MAX_PER_PAGE = 100
 
@@ -14,7 +13,7 @@ module Vault
       @user = user
       @q = q.to_s.strip.first(200)
       @kind = kind.to_s.presence_in(VaultItem::KINDS)
-      @status = status.to_s.presence_in(%w[active archived all]) || "all"
+      @status = status.to_s.presence_in(%w[active archived all]) || "active"
       @favorite = ActiveModel::Type::Boolean.new.cast(favorite)
       @tag = tag.to_s.strip.first(80)
       @page = [ page.to_i, 1 ].max
@@ -23,22 +22,45 @@ module Vault
     end
 
     def call
-      decrypted = candidate_scope.map { |item| summary_for(item) }
-      available_tags = decrypted.flat_map { |_, _, tags| tags }.uniq.sort_by(&:downcase)
-      decrypted = decrypted.select { |_, title, _| title_matches?(title) } if q.present?
-      decrypted = decrypted.select { |_, _, tags| tag_matches?(tags) } if tag.present?
+      scope = candidate_scope
 
-      total = decrypted.length
+      # With no private title/tag search, let PostgreSQL count and paginate.
+      # Only decrypt the six items on the requested page (or a bounded
+      # caller-selected page size). This also bounds AWS KMS unwrap requests.
+      #
+      # A private title/tag search must inspect all matching encrypted
+      # candidates: intentionally do NOT truncate results at 250 items.
+      # Such searches are O(number of candidate secrets); an encrypted
+      # searchable index would be a separate, explicitly reviewed design.
+      searching_encrypted_fields = q.present? || tag.present?
+      if searching_encrypted_fields
+        decrypted = scope.map { |item| summary_for(item) }
+        available_tags = tag_suggestions(decrypted)
+        decrypted = decrypted.select { |_, title, _| title_matches?(title) } if q.present?
+        decrypted = decrypted.select { |_, _, tags| tag_matches?(tags) } if tag.present?
+        total = decrypted.length
+      else
+        total = scope.count
+      end
+
       total_pages = [ (total.to_f / per_page).ceil, 1 ].max
       current_page = [ page, total_pages ].min
       options = { count: total, page: current_page, limit: per_page }
       if request
         options[:request] = Pagy::Request.new(request: request)
-        # Never propagate a decrypted search title (or any injected query) into page URLs.
-        options[:querify] = ->(query_params) { query_params.delete_if { |key, _| key != "page" } }
+        # URL state is a controller-generated allowlist. Never include decrypted
+        # titles or user-created tag values in page links.
+        options[:querify] = ->(query_params) { query_params.delete_if { |key, _| !%w[page filter kind status favorite].include?(key) } }
       end
       pager = Pagy::Offset.new(**options)
-      paged = decrypted.slice(pager.offset, pager.limit) || []
+      paged = if searching_encrypted_fields
+        decrypted.slice(pager.offset, pager.limit) || []
+      else
+        scope.offset(pager.offset).limit(pager.limit).map { |item| summary_for(item) }
+      end
+      # Suggestions on an unfiltered page are intentionally page-local; a
+      # free-text tag field below allows any tag, including tags on other pages.
+      available_tags ||= tag_suggestions(paged)
 
       Result.new(
         summaries: paged.map { |item, title, _| [ item, title ] },
@@ -52,6 +74,10 @@ module Vault
       )
     end
 
+    def tag_suggestions(summaries)
+      summaries.flat_map { |_, _, tags| tags }.uniq.sort_by(&:downcase)
+    end
+
     private
 
     attr_reader :user, :q, :kind, :status, :favorite, :tag, :page, :per_page, :request
@@ -62,7 +88,7 @@ module Vault
       scope = scope.where(archived_at: nil) if status == "active"
       scope = scope.where.not(archived_at: nil) if status == "archived"
       scope = scope.where(favorite: true) if favorite
-      scope.limit(MAX_CANDIDATES)
+      scope
     end
 
     def summary_for(item)
