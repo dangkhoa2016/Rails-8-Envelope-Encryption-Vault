@@ -24,6 +24,22 @@ class VaultListItemsTest < ActiveSupport::TestCase
     assert_equal revealed_before, AuditEvent.where(user: @user, action: "vault_item.revealed").count
   end
 
+  test "defaults to active while archived and all remain explicit choices" do
+    active = create_item("Active reference")
+    archived = create_item("Archived reference")
+    archived.update!(archived_at: Time.current)
+
+    default = Vault::ListItems.call(user: @user)
+    archived_only = Vault::ListItems.call(user: @user, status: "archived")
+    all = Vault::ListItems.call(user: @user, status: "all")
+
+    assert_equal [ active.id ], default.summaries.map { |item, _| item.id }
+    assert_equal [ archived.id ], archived_only.summaries.map { |item, _| item.id }
+    assert_equal [ active.id, archived.id ].sort, all.summaries.map { |item, _| item.id }.sort
+    assert_equal 1, default.total
+    assert_equal 2, all.total
+  end
+
   test "never includes another users matching encrypted title" do
     other_user = User.create!(
       email_address: "other-list-items@example.test",
@@ -64,6 +80,50 @@ class VaultListItemsTest < ActiveSupport::TestCase
     assert_equal 2, second.summaries.length
   end
 
+
+  test "unfiltered listing only decrypts requested page and preserves global count" do
+    13.times { |index| create_item("Listing page #{index}", tags: [ "list" ]) }
+
+    seen = []
+    original_reveal = Vault::RevealItem.method(:call)
+    singleton = Vault::RevealItem.singleton_class
+    singleton.define_method(:call) do |**args|
+      seen << args.fetch(:item).id
+      original_reveal.call(**args)
+    end
+
+    begin
+      first = Vault::ListItems.call(user: @user, page: 1)
+      assert_equal 13, first.total
+      assert_equal 6, first.summaries.length
+      assert_equal 6, seen.length
+
+      seen.clear
+      last = Vault::ListItems.call(user: @user, page: 3)
+      assert_equal 13, last.total
+      assert_equal 1, last.summaries.length
+      assert_equal 1, seen.length
+    ensure
+      singleton.define_method(:call, original_reveal)
+    end
+  end
+
+  test "title and tag searches include matching items beyond the former 250 limit" do
+    250.times { |i| create_item("ordinary #{i}", tags: [ "ordinary" ]) }
+    target = create_item("Needle beyond limit", tags: [ "deeply-hidden" ])
+    # Put the target outside the newest/favorite-first ordering window.
+    target.update!(updated_at: Time.current - 1.year)
+
+    by_title = Vault::ListItems.call(user: @user, q: "needle", status: "all")
+    by_tag = Vault::ListItems.call(user: @user, tag: "deeply-hidden", status: "all")
+    all = Vault::ListItems.call(user: @user, status: "all", page: 42)
+
+    assert_equal [ target.id ], by_title.summaries.map { |item, _| item.id }
+    assert_equal [ target.id ], by_tag.summaries.map { |item, _| item.id }
+    assert_equal 251, all.total
+    assert_equal 42, all.total_pages
+    assert_equal 5, all.summaries.size
+  end
 
   test "uses a practical default page size to expose paging in the demo" do
     7.times { |index| create_item("Sample login #{index}") }

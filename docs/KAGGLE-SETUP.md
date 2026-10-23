@@ -33,3 +33,7 @@ Prepare Internet access, writable disk, a disposable account, and read-only GitH
 ## Browser-access safeguards
 
 Publish the temporary browser link only after Rails and its database pass readiness checks; use synthetic fixtures and Rails login protection.
+
+## Vault search and pagination
+
+Search must honor account boundaries, and pagination must use GET links without leaking encrypted search terms.

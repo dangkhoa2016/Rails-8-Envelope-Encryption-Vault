@@ -2,29 +2,66 @@ class VaultItemsController < ApplicationController
   before_action :set_item, only: %i[show edit update archive unarchive favorite unfavorite]
   before_action :require_recent_reauthentication, only: %i[edit update]
 
+  # Filter tokens identify session-local snapshots; decrypted titles and tag names
+  # never become URL query parameters or server-side shared cache keys.
+  MAX_FILTER_SNAPSHOTS = 4
+  FILTER_TOKEN_PATTERN = /\A[0-9a-f]{32}\z/
+
   def index
-    # A bare GET opens the unfiltered listing. Pagy links always include ?page=,
-    # so filtered navigation survives without exposing decrypted titles in URLs.
-    if params[:page].present?
-      filters = session[:vault_listing_filters] || {}
+    token = params[:filter].to_s
+    if token.present?
+      snapshots = session[:vault_filter_snapshots] || {}
+      filters = snapshots[token] if FILTER_TOKEN_PATTERN.match?(token)
+      @filter_token = token if filters
+      filters ||= {}
+    elsif params[:page].present?
+      # Backward compatibility for older page-only links, without storing a
+      # duplicate copy of large plaintext search strings in the session cookie.
+      latest = session[:vault_current_filter_token]
+      filters = (session[:vault_filter_snapshots] || {})[latest]
+      @filter_token = latest if filters
+      filters ||= session[:vault_listing_filters] || {}
     else
       session.delete(:vault_listing_filters)
-      filters = {}
+      session.delete(:vault_current_filter_token)
+      # State is safe for a direct GET link. Search text and tags stay in
+      # opaque session-scoped filter snapshots and never enter URLs.
+      filters = { "status" => params[:status].to_s.presence_in(%w[active archived all]) || "active" }
     end
     load_index(filters)
   end
 
   def search
-    # POST is only used to submit search criteria, not to navigate result pages.
-    # Session cookies are encrypted and authenticated by Rails.
-    session[:vault_listing_filters] = {
+    # Submitting a search never copies private q/tag filters into the URL.
+    filters = {
       "q" => params[:q].to_s.strip.first(200),
       "kind" => params[:kind].to_s.presence_in(VaultItem::KINDS),
-      "status" => params[:status].to_s.presence_in(%w[active archived all]) || "all",
+      "status" => params[:status].to_s.presence_in(%w[active archived all]) || "active",
       "tag" => params[:tag].to_s.strip.first(80),
       "favorite" => ActiveModel::Type::Boolean.new.cast(params[:favorite]) ? "1" : "0"
     }
-    redirect_to vault_items_path(page: 1), status: :see_other
+    session.delete(:vault_listing_filters)
+    snapshots = (session[:vault_filter_snapshots] || {}).dup
+    @filter_token = SecureRandom.hex(16)
+    snapshots[@filter_token] = filters
+    snapshots = snapshots.to_a.last(MAX_FILTER_SNAPSHOTS).to_h
+    # Rails' encrypted cookie session has a strict size limit. Preserve the
+    # newest filter while evicting older snapshots if search terms are large.
+    snapshots.shift while snapshots.size > 1 && snapshots.to_json.bytesize > 1_200
+    session[:vault_filter_snapshots] = snapshots
+    session[:vault_current_filter_token] = @filter_token
+
+    respond_to do |format|
+      format.turbo_stream do
+        load_index(filters)
+        @async_search = true
+        render turbo_stream: turbo_stream.replace("vault_listing", partial: "vault_items/listing")
+      end
+      # Forms without JavaScript still reach the same safe GET listing URL.
+      format.html do
+        redirect_to vault_items_path(**listing_query_params(filters, @filter_token).merge(page: 1)), status: :see_other
+      end
+    end
   end
 
   def new
@@ -63,13 +100,13 @@ class VaultItemsController < ApplicationController
   def archive
     @item.update!(archived_at: Time.current)
     AuditEvent.create!(user: Current.user, vault_item: @item, action: "vault_item.archived", metadata: {})
-    redirect_to vault_items_path, notice: "Item archived."
+    redirect_to vault_items_path, notice: "Item archived. Find it in Archived; encrypted data and versions remain."
   end
 
   def unarchive
     @item.update!(archived_at: nil)
     AuditEvent.create!(user: Current.user, vault_item: @item, action: "vault_item.unarchived", metadata: {})
-    redirect_to vault_items_path, notice: "Item restored to your vault."
+    redirect_to vault_items_path, notice: "Item restored to Active vault items."
   end
 
   def favorite
@@ -86,7 +123,20 @@ class VaultItemsController < ApplicationController
 
   private
 
+  def listing_query_params(filters, token)
+    return {} unless token
+
+    # Type/state/favorite are non-secret UI classifications. q/tag stay private.
+    {}.tap do |query|
+      query[:filter] = token
+      query[:kind] = filters["kind"] if filters["kind"].present?
+      query[:status] = filters["status"] if filters["status"].present? && filters["status"] != "all"
+      query[:favorite] = "1" if filters["favorite"] == "1"
+    end
+  end
+
   def load_index(filters)
+    safe_query = listing_query_params(filters, @filter_token)
     result = Vault::ListItems.call(
       user: Current.user,
       q: filters["q"],
@@ -95,16 +145,19 @@ class VaultItemsController < ApplicationController
       favorite: filters["favorite"],
       tag: filters["tag"],
       page: params[:page],
-      request: request
+      # Pagy links are always GET index URLs with known-safe parameters,
+      # regardless of whether the listing was rendered by POST or GET.
+      request: { base_url: request.base_url, path: vault_items_path, params: safe_query.stringify_keys }
     )
     @summaries = result.summaries
     @pagy = result.pagy
     @page = result.page
     @total = result.total
     @total_pages = result.total_pages
+    @vault_listing_url = vault_items_path(**safe_query.merge(page: @page))
     @query = filters["q"].to_s
     @kind_filter = filters["kind"].to_s.presence_in(VaultItem::KINDS)
-    @status_filter = filters["status"].to_s.presence_in(%w[active archived all]) || "all"
+    @status_filter = filters["status"].to_s.presence_in(%w[active archived all]) || "active"
     @favorite_filter = ActiveModel::Type::Boolean.new.cast(filters["favorite"])
     @tag_filter = filters["tag"].to_s.strip.first(80)
     @tags_by_item_id = result.tags_by_item_id

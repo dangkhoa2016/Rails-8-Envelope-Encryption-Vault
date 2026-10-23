@@ -74,7 +74,7 @@ class VaultCategoryGuidanceTest < ApplicationSystemTestCase
     )
   end
 
-  test "vault pagination navigates without Turbo POST redirect errors or revealing title filters in the URL" do
+  test "vault search updates in place and GET pagination never reveals title filters" do
     user = create_system_user("vault-paging-browser@example.test")
     sign_in_system_user(user)
 
@@ -90,16 +90,27 @@ class VaultCategoryGuidanceTest < ApplicationSystemTestCase
     visit vault_items_path
     fill_in "Search encrypted titles", with: "Paging sample"
     select "Login", from: "Filter by type"
+    execute_script("window.__vaultNoReload = true")
     click_button "Search"
 
+    assert_equal true, evaluate_script("window.__vaultNoReload")
     assert_text "Page 1 of 2"
-    assert_current_path vault_items_path(page: 1)
+    assert_equal "/vault_items", URI.parse(page.current_url).path
+    current_params = Rack::Utils.parse_nested_query(URI.parse(page.current_url).query)
+    assert_equal "1", current_params.fetch("page")
+    assert_equal "login", current_params.fetch("kind")
+    assert_match /\A[0-9a-f]{32}\z/, current_params.fetch("filter")
+    assert_nil current_params["q"]
+    assert_nil current_params["tag"]
     assert_text "Paging sample 08"
     assert_no_text "Paging sample 01"
     assert_selector "nav[aria-label='Vault pagination'] a[rel='next'][href*='page=2']", count: 1
     click_link "Next"
     assert_text "Page 2 of 2"
-    assert_current_path vault_items_path(page: 2)
+    next_params = Rack::Utils.parse_nested_query(URI.parse(page.current_url).query)
+    assert_equal "2", next_params.fetch("page")
+    assert_equal current_params.fetch("filter"), next_params.fetch("filter")
+    assert_equal current_params.fetch("kind"), next_params.fetch("kind")
     assert_text "Paging sample 01"
     assert_no_text "Paging sample 08"
     assert_select "Filter by type", selected: "Login"
@@ -108,6 +119,7 @@ class VaultCategoryGuidanceTest < ApplicationSystemTestCase
     assert_selector "nav[aria-label='Vault pagination'] a[rel='prev'][href*='page=1']", count: 1
     click_link "Previous"
     assert_text "Page 1 of 2"
+    assert_equal current_params.fetch("filter"), Rack::Utils.parse_nested_query(URI.parse(page.current_url).query).fetch("filter")
     assert_text "Paging sample 08"
     assert_no_text "Paging sample 01"
     refute_includes page.current_url, "Paging"
@@ -115,6 +127,34 @@ class VaultCategoryGuidanceTest < ApplicationSystemTestCase
     assert_current_path vault_items_path
     assert_no_text "Filters active"
     assert_field "Search encrypted titles", with: ""
+  end
+
+  test "browser back and forward restore a Vault search URL and its private filters" do
+    user = create_system_user("vault-history-browser@example.test")
+    sign_in_system_user(user)
+    Vault::CreateItem.call(user: user, kind: "login", payload: {
+      "schema" => "vault.login.v1", "title" => "History sample secret",
+      "username" => "synthetic@example.test", "password" => "synthetic",
+      "url" => "https://example.test", "notes" => "", "tags" => %w[demo]
+    })
+
+    visit vault_items_path
+    fill_in "Search encrypted titles", with: "History sample"
+    click_button "Search"
+    assert_text "Filters active"
+    filtered_url = page.current_url
+    assert_includes filtered_url, "filter="
+    refute_includes filtered_url, "History"
+
+    page.go_back
+    assert_current_path vault_items_path
+    assert_field "Search encrypted titles", with: ""
+    assert_no_text "Filters active"
+
+    page.go_forward
+    assert_current_path filtered_url
+    assert_field "Search encrypted titles", with: "History sample"
+    assert_text "Filters active"
   end
 
   test "dashboard creation action matches the secondary vault action below content" do
@@ -158,8 +198,8 @@ class VaultCategoryGuidanceTest < ApplicationSystemTestCase
 
     visit vault_items_path
     assert_select "Filter by type", selected: "All types"
-    assert_select "Filter by state", selected: "All states"
-    assert_select "Filter by tag", selected: "All tags"
+    assert_select "Filter by state", selected: "Active"
+    assert_selector "input#tag[placeholder='Any tag (exact match)']"
 
     select "Login", from: "Filter by type"
     assert_select "Filter by type", selected: "Login"

@@ -67,6 +67,10 @@ jobs:
       - run: bin/rails db:prepare
       - run: bin/rails test
       - run: bin/rails test:system
+      - name: Benchmark synthetic Vault search (LocalFile KEK only)
+        env:
+          VAULT_BENCH_ITEMS: "260"
+        run: bin/rails runner script/benchmark-vault-search
 
   ruby_compatibility:
     runs-on: ubuntu-latest
