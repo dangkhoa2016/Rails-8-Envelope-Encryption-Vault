@@ -2,7 +2,6 @@
 """Source-only safety and reproducibility contract for the Kaggle/Colab demo."""
 import json
 import re
-import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,7 +37,7 @@ for i, cell in enumerate(cells):
 
 all_text = "\n".join(source_chunks)
 expected = {
-    "pinned source tag": 'REF = "v1.0.0"',
+    "named release tag": 'REF = "v1.0.0"',
     "repo identity": "dangkhoa2016/Rails-8-Envelope-Encryption-Vault",
     "read-only token": "GH_READ_TOKEN",
     "safe credential helper": "GIT_ASKPASS",
@@ -46,8 +45,10 @@ expected = {
     "Rails unit/integration tests": "bin/rails test",
     "Selenium system tests": "bin/rails test:system",
     "fixture builder": "demo:fixture",
-    "Cloudflare email gate": "--allowed-mail",
-    "prevent public tunnel default": 'ACCESS_EMAIL = ""',
+    "quick tunnel enabled by default": "ENABLE_CLOUDFLARE_TUNNEL = True",
+    "Rails health marker": "RAILS_HEALTH=PASS",
+    "cloudflared startup": '"tunnel", "--no-autoupdate", "--url", local_url',
+    "browser URL": "BROWSER_DEMO_URL:",
     "encrypted fixture integrity": "ENCRYPTED_FIXTURES=PASS",
     "browser health gate": "RAILS_HEALTH=PASS",
     "screenshot capture": "script/capture-showcase",
@@ -56,14 +57,39 @@ expected = {
 for name, marker in expected.items():
     if marker not in all_text:
         errors.append(f"missing {name}")
-for path in ("bootstrap.sh", "Gemfile.lock", "script/bootstrap-services-lib.sh"):
-    expected_blob = subprocess.run(["git", "-C", str(ROOT), "rev-parse", f"HEAD:{path}"],
-                                   text=True, capture_output=True)
-    if expected_blob.returncode or expected_blob.stdout.strip() not in all_text:
-        errors.append(f"source blob fingerprint missing or inconsistent: {path}")
-if "EXPECTED_SOURCE_BLOBS" not in all_text or "tag_commit" not in all_text:
-    errors.append("tag and fingerprint validation code missing")
+for name, marker in {
+    "fresh per-run checkout": 'secrets.token_hex(6)',
+    "fresh checkout diagnostics": 'SOURCE_CHECKOUT=FAIL reason=DIRTY_WORKTREE',
+    "all Vault kinds fixture coverage": "VaultItem::KINDS",
+    "four examples per kind": 'kind_counts.fetch(kind, 0) >= 4',
+    "minimum immutable versions": "versions.size >= 29",
+    "per-run PostgreSQL role": 'DB_USER = f"vault_demo_{RUN_ID}"',
+    "per-run demo database": 'DB_NAME = f"vault_demo_db_{RUN_ID}"',
+    "per-run HTTP port": 'port_probe.bind(("127.0.0.1", 0))',
+    "managed Redis reuse": 'base_env["REDIS_PASSWORD"] = prior_redis_password.group(1)',
+    "new Rails server identity": 'server_identity = (str(REPO), PORT)',
+    "database readiness check": "RAILS_DB_READINESS=PASS authenticated PostgreSQL SELECT 1",
+}.items():
+    if marker not in all_text:
+        errors.append(f"missing rerun and fixture safety check: {name}")
+if "expected 6 sample items" in all_text or "versions.size >= 7" in all_text:
+    errors.append("stale six-item fixture assertions are forbidden")
+if "EXPECTED_SOURCE_BLOBS" in all_text:
+    errors.append("obsolete hard-coded source blob SHA fingerprints are forbidden")
+for name, marker in {
+    "annotated tag type": 'git("cat-file", "-t", tag_object, cwd=REPO)',
+    "tag object reference": 'tag_ref = f"refs/tags/{REF}"',
+    "tag-to-checkout validation": 'sha != tag_commit',
+    "Git object integrity": 'git("fsck", "--full", "--strict", "--no-reflogs", "--no-progress", cwd=REPO)',
+    "clean checkout": 'git("status", "--porcelain", cwd=REPO)',
+}.items():
+    if marker not in all_text:
+        errors.append(f"missing source integrity check: {name}")
 
+if any(x in all_text for x in ("--allowed-mail", "ACCESS_EMAIL", "Email you control for Cloudflare OTP")):
+    errors.append("obsolete Cloudflare OTP requirement")
+if "tunnel_proc = subprocess.Popen(" in all_text and all_text.index('print("RAILS_HEALTH=PASS') > all_text.index("tunnel_proc = subprocess.Popen("):
+    errors.append("Cloudflare must start after Rails health")
 if re.search(r"(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|BEGIN (?:RSA|OPENSSH) PRIVATE KEY)", all_text):
     errors.append("potential embedded credential")
 for rel in ("docs/KAGGLE-SETUP.md", "docs/KAGGLE-SETUP.vi.md"):
@@ -74,4 +100,4 @@ if errors:
         print("ERROR:", problem)
     raise SystemExit("NOTEBOOK_DEMO_CHECK=FAIL")
 print(f"NOTEBOOK_DEMO_CHECK=PASS cells={len(cells)} code_cells={code_count} "
-      "pinned_release=verified outputs=clean")
+      "release_tag=validated outputs=clean")

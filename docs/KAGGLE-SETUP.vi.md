@@ -22,3 +22,7 @@ Demo CPU sử dụng cơ sở dữ liệu Rails tạm và dữ liệu giả đã
 ## Điều kiện runtime CPU
 
 Cần kết nối Internet, ổ đĩa ghi được, tài khoản demo và quyền đọc GitHub khi repository Private.
+
+## Kiểm soát truy cập trình duyệt
+
+Chỉ mở URL tạm sau khi Rails và database sẵn sàng; chỉ dùng dữ liệu giả và đăng nhập Rails.
