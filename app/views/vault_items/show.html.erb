@@ -12,11 +12,7 @@
       </div>
     </div>
     <div class="flex flex-wrap gap-2">
-      <% if @item.favorite? %>
-        <%= button_to "★ Favorite", unfavorite_vault_item_path(@item), method: :post, class: "rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-2.5 text-sm font-medium text-amber-200 hover:bg-amber-400/15" %>
-      <% else %>
-        <%= button_to "☆ Add favorite", favorite_vault_item_path(@item), method: :post, class: "rounded-xl border border-white/10 px-4 py-2.5 text-sm font-medium text-slate-300 hover:bg-white/5" %>
-      <% end %>
+      <%= render "favorite_control", item: @item %>
       <%= link_to "Edit", edit_vault_item_path(@item), class: "rounded-xl bg-indigo-500 px-4 py-2.5 text-sm font-semibold hover:bg-indigo-400" %>
       <%= link_to "Versions", vault_item_versions_path(@item), class: "rounded-xl border border-white/10 px-4 py-2.5 text-sm font-medium hover:bg-white/5" %>
       <% if @item.kind == "environment" %><%= button_to "Download .env", vault_item_export_path(@item), method: :post, class: "rounded-xl border border-white/10 px-4 py-2.5 text-sm font-medium" %><% end %>
