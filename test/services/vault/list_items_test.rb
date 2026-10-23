@@ -24,6 +24,22 @@ class VaultListItemsTest < ActiveSupport::TestCase
     assert_equal revealed_before, AuditEvent.where(user: @user, action: "vault_item.revealed").count
   end
 
+  test "defaults to active while archived and all remain explicit choices" do
+    active = create_item("Active reference")
+    archived = create_item("Archived reference")
+    archived.update!(archived_at: Time.current)
+
+    default = Vault::ListItems.call(user: @user)
+    archived_only = Vault::ListItems.call(user: @user, status: "archived")
+    all = Vault::ListItems.call(user: @user, status: "all")
+
+    assert_equal [ active.id ], default.summaries.map { |item, _| item.id }
+    assert_equal [ archived.id ], archived_only.summaries.map { |item, _| item.id }
+    assert_equal [ active.id, archived.id ].sort, all.summaries.map { |item, _| item.id }.sort
+    assert_equal 1, default.total
+    assert_equal 2, all.total
+  end
+
   test "never includes another users matching encrypted title" do
     other_user = User.create!(
       email_address: "other-list-items@example.test",

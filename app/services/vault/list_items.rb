@@ -14,7 +14,7 @@ module Vault
       @user = user
       @q = q.to_s.strip.first(200)
       @kind = kind.to_s.presence_in(VaultItem::KINDS)
-      @status = status.to_s.presence_in(%w[active archived all]) || "all"
+      @status = status.to_s.presence_in(%w[active archived all]) || "active"
       @favorite = ActiveModel::Type::Boolean.new.cast(favorite)
       @tag = tag.to_s.strip.first(80)
       @page = [ page.to_i, 1 ].max
@@ -34,8 +34,9 @@ module Vault
       options = { count: total, page: current_page, limit: per_page }
       if request
         options[:request] = Pagy::Request.new(request: request)
-        # Never propagate a decrypted search title (or any injected query) into page URLs.
-        options[:querify] = ->(query_params) { query_params.delete_if { |key, _| key != "page" } }
+        # URL state is a controller-generated allowlist. Never include decrypted
+        # titles or user-created tag values in page links.
+        options[:querify] = ->(query_params) { query_params.delete_if { |key, _| !%w[page filter kind status favorite].include?(key) } }
       end
       pager = Pagy::Offset.new(**options)
       paged = decrypted.slice(pager.offset, pager.limit) || []
