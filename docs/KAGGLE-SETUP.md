@@ -25,3 +25,7 @@ constitute production deployment acceptance.
 ## Notebook roadmap
 
 This source-driven CPU demonstration uses a temporary Rails database and synthetic encrypted data. The notebook implementation will be published after its security and source verification contracts are ready.
+
+## CPU runtime prerequisites
+
+Prepare Internet access, writable disk, a disposable account, and read-only GitHub access for private sources.
