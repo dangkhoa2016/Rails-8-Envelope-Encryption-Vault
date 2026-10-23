@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Source-only bilingual documentation, badge and local-link integrity gate."""
+from pathlib import Path
+from urllib.parse import unquote
+import re
+import sys
+import subprocess
+
+ROOT=Path(__file__).resolve().parents[1]
+docs=sorted(ROOT/p for p in subprocess.check_output(['git','-C',str(ROOT),'ls-files','--cached','--others','--exclude-standard','--','*.md'],text=True).splitlines())
+errors=[]
+# Repository convention: keep the GitHub landing pages at the root;
+# store every other narrative Markdown pair in docs/ or .github/.
+root_pages=[p.relative_to(ROOT).as_posix() for p in docs if p.parent==ROOT and p.name not in ("README.md", "README.vi.md")]
+if root_pages:
+    errors.append("Root Markdown documents must live under docs/: " + ", ".join(root_pages))
+# GitHub resolves README.md by .github/ -> root -> docs/.
+# A community index in .github/README.md hides the actual project landing page.
+for forbidden in (".github/README.md", ".github/README.vi.md"):
+    if (ROOT/forbidden).exists():
+        errors.append("GitHub README precedence violation: " + forbidden + " hides the root project README")
+for required in ("docs/README.md", "docs/README.vi.md", "docs/SECURITY.md", "docs/SECURITY.vi.md", "README.md", "README.vi.md", "docs/COMMUNITY.md", "docs/COMMUNITY.vi.md"):
+    if not (ROOT/required).is_file():
+        errors.append("Missing canonical documentation: " + required)
+checked=0
+pair_count=0
+for p in docs:
+    rel=p.relative_to(ROOT)
+    if p.name.endswith('.vi.md'):
+        partner=p.with_name(p.name[:-6]+'.md')
+        switch='[English]('+partner.name+')'
+    else:
+        partner=p.with_name(p.stem+'.vi.md')
+        switch='[Tiếng Việt]('+partner.name+')'
+        pair_count+=1
+    if not partner.is_file():errors.append(str(rel)+': missing bilingual partner')
+    content=p.read_text()
+    if switch not in content:errors.append(str(rel)+': missing language switch')
+    if '🌐 Language / Ngôn ngữ:' not in content:errors.append(str(rel)+': missing language header')
+    if re.search(r'(?i)(?<![\w])(?:v?0[.]1[.]\d+|RC[-_ ]?\d+|release candidate|FIX\d+)(?![\w])',content):
+        errors.append(str(rel)+': legacy version or milestone text')
+    for target in re.findall(r'\[[^\]]*\]\(([^)]+)\)',content):
+        target=unquote(target.split('#',1)[0].strip())
+        if not target or target.startswith(('http:', 'https:', 'mailto:', 'data:')):continue
+        if ' ' in target:target=target.split(' ',1)[0]
+        checked+=1
+        dest=(p.parent/target).resolve()
+        if not dest.is_relative_to(ROOT.resolve()):errors.append(str(rel)+': link outside repo '+target)
+        elif not dest.exists():errors.append(str(rel)+': broken link '+target)
+if (ROOT/'VERSION').read_text().strip()!='1.0.0':errors.append('VERSION mismatch')
+license=(ROOT/'LICENSE').read_text()
+if 'MIT License' not in license or 'Đăng Khoa <i.am@dangkhoa.dev>' not in license:
+    errors.append('MIT license attribution mismatch')
+readme=(ROOT/'README.md').read_text()
+for badge in ('actions/workflows/ci.yml/badge.svg','actions/workflows/docs.yml/badge.svg','license-MIT','release-v1.0.0','Rails-8','PostgreSQL-17'):
+    if badge not in readme:errors.append('README badge missing: '+badge)
+must=[
+'.github/CODEOWNERS','.github/dependabot.yml','.github/workflows/ci.yml',
+'.github/workflows/docs.yml','.github/ISSUE_TEMPLATE/bug_report.yml',
+'.github/ISSUE_TEMPLATE/feature_request.yml','.github/ISSUE_TEMPLATE/config.yml',
+'.github/PULL_REQUEST_TEMPLATE.md','.github/PULL_REQUEST_TEMPLATE.vi.md']
+for rel in must:
+    if not (ROOT/rel).is_file():errors.append('Missing GitHub integration: '+rel)
+if errors:
+    print('DOC_QUALITY=FAIL, '+str(len(errors))+' errors')
+    for e in errors:print('ERROR:',e)
+    sys.exit(1)
+print('DOC_QUALITY=PASS pairs='+str(pair_count)+' files='+str(len(docs))+' local_links='+str(checked))

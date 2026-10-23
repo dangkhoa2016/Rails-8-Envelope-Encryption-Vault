@@ -1,0 +1,15 @@
+name: Documentation
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  bilingual-documentation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check English/Vietnamese parity and local links
+        run: python3 script/doc-quality-check
+      - name: Check published documentation links
+        run: bash script/doc-link-check

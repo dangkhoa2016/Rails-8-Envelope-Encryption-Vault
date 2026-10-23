@@ -38,6 +38,7 @@ The top-level [README](../README.md) introduces the vault, envelope encryption a
 - [Qualification matrix](qualification.md): which PASS is source-only versus host-specific.
 - [Evidence index](evidence-index.md): reviewable artifacts, exclusions and reporting template.
 - [Accessibility](ACCESSIBILITY.md) and [manual test plan](ACCESSIBILITY-TEST-PLAN.md): explicit test scope and pending evidence.
+- [Community maintenance guide](COMMUNITY.md): contribution, support, vulnerability reporting, issues and pull requests.
 - [Changelog](CHANGELOG.md), [Security policy](SECURITY.md), [Contribution guide](../.github/CONTRIBUTING.md).
 
 ## Security and evidence conventions
