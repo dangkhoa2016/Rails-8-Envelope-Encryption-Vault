@@ -29,3 +29,7 @@ This source-driven CPU demonstration uses a temporary Rails database and synthet
 ## CPU runtime prerequisites
 
 Prepare Internet access, writable disk, a disposable account, and read-only GitHub access for private sources.
+
+## Browser-access safeguards
+
+Publish the temporary browser link only after Rails and its database pass readiness checks; use synthetic fixtures and Rails login protection.
