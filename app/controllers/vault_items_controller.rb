@@ -108,18 +108,44 @@ class VaultItemsController < ApplicationController
   end
 
   def favorite
-    @item.update!(favorite: true)
-    AuditEvent.create!(user: Current.user, vault_item: @item, action: "vault_item.favorited", metadata: {})
-    redirect_to vault_items_path, notice: "Added to favorites."
+    change_favorite(favorite: true, action: "vault_item.favorited", notice: "Added to favorites.")
   end
 
   def unfavorite
-    @item.update!(favorite: false)
-    AuditEvent.create!(user: Current.user, vault_item: @item, action: "vault_item.unfavorited", metadata: {})
-    redirect_to vault_items_path, notice: "Removed from favorites."
+    change_favorite(favorite: false, action: "vault_item.unfavorited", notice: "Removed from favorites.")
   end
 
   private
+
+  def change_favorite(favorite:, action:, notice:)
+    @item.update!(favorite: favorite)
+    AuditEvent.create!(user: Current.user, vault_item: @item, action: action, metadata: {})
+
+    detail = params[:source] == "detail"
+    respond_to do |format|
+      format.turbo_stream do
+        if detail
+          render turbo_stream: [
+            turbo_stream.replace(
+              "vault_favorite_control",
+              partial: "vault_items/favorite_control",
+              locals: { item: @item, updated: true }
+            ),
+            turbo_stream.update(
+              "toast_notifications",
+              partial: "shared/toast",
+              locals: { message: notice, kind: :notice }
+            )
+          ]
+        else
+          redirect_to vault_items_path, status: :see_other, notice: notice
+        end
+      end
+      format.html do
+        redirect_to(detail ? vault_item_path(@item) : vault_items_path, status: :see_other, notice: notice)
+      end
+    end
+  end
 
   def listing_query_params(filters, token)
     return {} unless token
