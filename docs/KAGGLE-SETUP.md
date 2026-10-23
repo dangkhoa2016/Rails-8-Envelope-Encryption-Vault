@@ -8,7 +8,7 @@
 
 This is a CPU-only, Docker-free demonstration that starts with the actual tagged repository source—not a separate Kaggle Dataset, prepared database dump, container image or hosted production service.
 
-The notebook provisions Ruby 3.4.11, Rails 8.1.4, PostgreSQL 17, Redis, a disposable LocalFile KEK and database schema. It runs cryptographic/security checks, the entire Rails and Selenium test suites, six categories of encrypted synthetic vault items, HTTP health checks and optionally ten real UI screenshots plus a verified showcase archive.
+The notebook provisions Ruby 3.4.11, Rails 8.1.4, PostgreSQL 17, Redis, a disposable LocalFile KEK and database schema. It runs cryptographic/security checks, the entire Rails and Selenium test suites, seven categories of encrypted synthetic vault items, HTTP health checks and optionally ten real UI screenshots plus a verified showcase archive.
 
 ## Requirements
 
@@ -16,17 +16,27 @@ The notebook provisions Ruby 3.4.11, Rails 8.1.4, PostgreSQL 17, Redis, a dispos
 - Writable runtime storage with several gigabytes available; Chrome/Selenium runs on CPU.
 - **GitHub access:** The repository is currently **Private**. You must have permission to read it. Create a fine-grained GitHub token limited to this one repository with only **Contents: Read** and store it as `GH_READ_TOKEN` in Kaggle Secrets or Colab Secrets. An account without repository permission cannot clone it merely by creating a token.
 - When the repository becomes Public, the notebook tries anonymous cloning first: **no GitHub token is needed**.
-- Optional: an email address you control, for a temporary Cloudflare tunnel protected by One-Time PIN. No open tunnel is created by default.
+- A temporary **public Cloudflare Quick Tunnel is enabled by default** (Rails authentication still applies). No Cloudflare email OTP is needed. The temporary URL can be opened by anyone who knows it; only use synthetic data and keep the generated demo password private. Explicitly disable the tunnel for localhost-only tests.
 
 ## Start in Kaggle or Colab
 
 1. Open the [notebook file](../notebooks/Ruby_Envelope_Vault_v1_Kaggle_Colab_Full_Demo.ipynb) on GitHub. Download it and import the `.ipynb` into **Kaggle Code** or **Google Colab**.
 2. On Kaggle select **CPU** and enable **Internet**. If cloning this Private repository, set up the secret `GH_READ_TOKEN` (read-only) before running.
-3. In the notebook settings cell, optionally set `ACCESS_EMAIL = "your-email@example.com"` for browser access using an OTP-protected Quick Tunnel; keep it empty if only local access is required. Leave `CAPTURE_SCREENSHOTS = True` and `MAKE_SHOWCASE_PACKAGE = True` for full verification.
-4. Choose **Run All** and review the output after each major stage. The notebook verifies that the checkout matches the annotated `v1.0.0` tag, then checks Git blob fingerprints for the bootstrap, dependency lockfile and service provisioner.
-5. For an email-gated tunnel, confirm the One-Time PIN sent to the selected address. Then sign in to Rails using the notebook-generated `showcase@example.test` account and temporary demo password shown in your **private notebook output**.
+3. Leave `ENABLE_CLOUDFLARE_TUNNEL = True` to open a browser URL automatically **after** Rails passes `/up=200` and `/session/new=200`. No email or OTP prompt is required. Set the flag to `False` for localhost-only testing. Keep screenshot capture and showcase packaging enabled for the full demo.
+4. Choose **Run All** and review the output after each major stage. The notebook validates the annotated `v1.0.0` tag, checks that it resolves to the checked-out commit, verifies the fetched Git objects with `git fsck`, then checks the application version and clean working tree. No source-file SHA values are hard-coded.
+5. When the notebook prints `CLOUDFLARE_TUNNEL=READY`, click `BROWSER_DEMO_URL` to open the Rails login page. Log in with the synthetic `showcase@example.test` account and the randomly generated demo password from **private** notebook output; do not share the password.
 6. Browse the dashboard, Vault categories, item details, immutable versions, audit trail, MFA/security and session screens. The screenshot step generates ten real desktop/mobile Selenium screenshots using synthetic data. The showcase package contains checksum manifests and an integrity report.
 7. End the session with the optional shutdown cell. Clear notebook output before sharing. Do **not** upload runtime logs, actual credentials, the demo password, KEK files or database dumps to GitHub.
+
+**Current demo fixture profile (v1.0.0):** the demo seed creates **28 encrypted synthetic items**, four examples in each of the seven categories, with **29 encrypted versions** and **29 creation/update audit events** on a clean demo account. The Vault index displays **6 items per page**, allowing five pages of browsing, Previous/Next controls and category/tag filtering. Re-running the fixture without `DEMO_RESET` adds only missing examples; for existing six-item accounts, re-run the fixture to add the 22 new records. The acceptance table below records the **historical 2026-10-22 run**, before this fixture expansion, and is intentionally unchanged.
+
+**GET pagination (Pagy 43):** Vault uses six items per page. A title search is submitted by POST, then redirected (303) to `/vault_items?page=1`; subsequent page changes are ordinary `GET /vault_items?page=N` links. Search terms remain inside the encrypted Rails session rather than browser URLs. The Audit log uses ten events per page, with GET links that preserve category and action filters. Use **Clear filters** to remove Vault session filters.
+
+**Git trust boundary:** These checks verify checkout/object consistency, not release authenticity. A movable unsigned tag can be replaced; independent authenticity requires a trusted signed release tag or equivalent external trust anchor.
+
+**Re-running the notebook:** Each full Run All creates a fresh isolated Git checkout to avoid stale or dirty working directories. Prior checkout directories are preserved until runtime reset, which may use additional disk space. After seeding, the notebook expects at least four items in each of seven categories and at least 29 encrypted versions; it no longer checks for the obsolete six-item demo.
+
+**Repeated Run All and database authentication:** Every run creates its own PostgreSQL role, development/test databases, and available Rails HTTP port. Older servers cannot satisfy the new run's health check and existing database roles are not re-passworded. Before publishing the Cloudflare browser URL, the notebook checks an authenticated PostgreSQL SELECT 1, not just HTTP /up. These are disposable synthetic demo databases; reset the notebook runtime to reclaim storage and retire old processes.
 
 ## Verified acceptance and runtime boundaries
 
@@ -41,7 +51,7 @@ The *separate, manually executed* Kaggle CPU acceptance run on 2026-10-22 achiev
 | Selenium screenshots | 10/10 PASS |
 | Showcase integrity | 307 links/references checked, 10 screenshots, 59 root files — PASS |
 
-**Scope warning:** This was a source-backed fresh Kaggle installation and manual sequence validation, **not** a separate, independently recorded `Run All` of this exact notebook file in a new session. Do not claim that notebook reproducibility is fully accepted until that run is completed.
+**Evidence boundary:** The earlier Kaggle acceptance and a user-supplied Colab Run All confirmed the local Rails pipeline. The simplified Rails-first Quick Tunnel workflow now passes source checks but **still requires a fresh Colab browser smoke test**. Do not report interactive external-browser acceptance until a tester opens the URL and logs in.
 
 ### Test-only umask compatibility
 
