@@ -52,7 +52,7 @@ license=(ROOT/'LICENSE').read_text()
 if 'MIT License' not in license or 'Đăng Khoa <i.am@dangkhoa.dev>' not in license:
     errors.append('MIT license attribution mismatch')
 readme=(ROOT/'README.md').read_text()
-for badge in ('actions/workflows/ci.yml/badge.svg','actions/workflows/docs.yml/badge.svg','license-MIT','release-v1.0.0','Rails-8','PostgreSQL-17'):
+for badge in ('actions/workflows/ci.yml/badge.svg','actions/workflows/docs.yml/badge.svg','license-MIT','source%20tag-v1.0.0','Rails-8','PostgreSQL-17'):
     if badge not in readme:errors.append('README badge missing: '+badge)
 must=[
 '.github/CODEOWNERS','.github/dependabot.yml','.github/workflows/ci.yml',
