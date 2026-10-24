@@ -1,103 +1,140 @@
 #!/usr/bin/env python3
-"""Source-only safety and reproducibility contract for the Kaggle/Colab demo."""
+"""Validate the single pinned Kaggle / Colab demonstration notebook."""
 import json
 import re
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK = ROOT / "notebooks/Ruby_Envelope_Vault_Kaggle_Colab_Full_Demo.ipynb"
-# The notebook is introduced in the later demo feature commit.
+COMMIT = "7f58d38c857893e5f167e57d5d0128957d55b1f5"
+TREE = "0aba267ca3b8272d431359c391d0d57b1ae2822a"
+# The canonical notebook is introduced by the following feature commit.
 if not NOTEBOOK.is_file():
-    print("NOTEBOOK_DEMO_CHECK=NOT_APPLICABLE (notebook not published)")
+    print("NOTEBOOK_DEMO_CHECK=NOT_APPLICABLE (notebook not yet published)")
     raise SystemExit(0)
 errors = []
+
+found_notebooks = sorted((ROOT / "notebooks").glob("*.ipynb"))
+if found_notebooks != [NOTEBOOK]:
+    errors.append(f"expected exactly one canonical notebook: {[x.name for x in found_notebooks]}")
+
 try:
     payload = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
 except (OSError, ValueError) as exc:
-    raise SystemExit(f"NOTEBOOK_DEMO_CHECK=FAIL unable to parse notebook: {exc}")
+    raise SystemExit(f"NOTEBOOK_DEMO_CHECK=FAIL could not read notebook: {exc}")
 
 cells = payload.get("cells", [])
-if payload.get("nbformat") != 4 or len(cells) < 20:
-    errors.append("expected a complete Jupyter v4 demo with at least 20 cells")
-source_chunks = []
+if payload.get("nbformat") != 4 or len(cells) != 23:
+    errors.append("expected the full 23-cell Jupyter v4 notebook")
+
+sources = []
 code_count = 0
 for i, cell in enumerate(cells):
-    source = cell.get("source", "")
-    if isinstance(source, list):
-        source = "".join(source)
-    source_chunks.append(source)
+    src = cell.get("source", "")
+    src = "".join(src) if isinstance(src, list) else src
+    sources.append(src)
     if cell.get("cell_type") == "code":
         code_count += 1
         if cell.get("outputs") or cell.get("execution_count") is not None:
-            errors.append(f"cell {i}: saved execution output or count is forbidden")
+            errors.append(f"cell {i}: committed notebook output/execution history is forbidden")
         try:
-            compile(source, f"notebook-cell-{i}", "exec")
+            compile(src, f"vault-demo-{i}", "exec")
         except SyntaxError as exc:
-            errors.append(f"cell {i}: invalid Python syntax ({exc})")
+            errors.append(f"cell {i}: invalid Python source: {exc}")
 
-all_text = "\n".join(source_chunks)
-expected = {
-    "named release tag": 'REF = "v1.0.0"',
-    "repo identity": "dangkhoa2016/Rails-8-Envelope-Encryption-Vault",
-    "read-only token": "GH_READ_TOKEN",
-    "safe credential helper": "GIT_ASKPASS",
-    "isolated test umask": "umask 022",
-    "Rails unit/integration tests": "bin/rails test",
-    "Selenium system tests": "bin/rails test:system",
-    "fixture builder": "demo:fixture",
-    "quick tunnel enabled by default": "ENABLE_CLOUDFLARE_TUNNEL = True",
-    "Rails health marker": "RAILS_HEALTH=PASS",
-    "cloudflared startup": '"tunnel", "--no-autoupdate", "--url", local_url',
-    "browser URL": "BROWSER_DEMO_URL:",
-    "encrypted fixture integrity": "ENCRYPTED_FIXTURES=PASS",
-    "browser health gate": "RAILS_HEALTH=PASS",
-    "screenshot capture": "script/capture-showcase",
-    "showcase packaging": "script/build-public-showcase",
-}
-for name, marker in expected.items():
-    if marker not in all_text:
-        errors.append(f"missing {name}")
-for name, marker in {
-    "fresh per-run checkout": 'secrets.token_hex(6)',
-    "fresh checkout diagnostics": 'SOURCE_CHECKOUT=FAIL reason=DIRTY_WORKTREE',
-    "all Vault kinds fixture coverage": "VaultItem::KINDS",
-    "four examples per kind": 'kind_counts.fetch(kind, 0) >= 4',
-    "minimum immutable versions": "versions.size >= 29",
-    "per-run PostgreSQL role": 'DB_USER = f"vault_demo_{RUN_ID}"',
-    "per-run demo database": 'DB_NAME = f"vault_demo_db_{RUN_ID}"',
-    "per-run HTTP port": 'port_probe.bind(("127.0.0.1", 0))',
-    "managed Redis reuse": 'base_env["REDIS_PASSWORD"] = prior_redis_password.group(1)',
-    "new Rails server identity": 'server_identity = (str(REPO), PORT)',
-    "database readiness check": "RAILS_DB_READINESS=PASS authenticated PostgreSQL SELECT 1",
-}.items():
-    if marker not in all_text:
-        errors.append(f"missing rerun and fixture safety check: {name}")
-if "expected 6 sample items" in all_text or "versions.size >= 7" in all_text:
-    errors.append("stale six-item fixture assertions are forbidden")
-if "EXPECTED_SOURCE_BLOBS" in all_text:
-    errors.append("obsolete hard-coded source blob SHA fingerprints are forbidden")
-for name, marker in {
-    "annotated tag type": 'git("cat-file", "-t", tag_object, cwd=REPO)',
-    "tag object reference": 'tag_ref = f"refs/tags/{REF}"',
-    "tag-to-checkout validation": 'sha != tag_commit',
-    "Git object integrity": 'git("fsck", "--full", "--strict", "--no-reflogs", "--no-progress", cwd=REPO)',
+body = chr(10).join(sources)
+required = {
+    "repository": 'REPO_SLUG = "dangkhoa2016/Rails-8-Envelope-Encryption-Vault"',
+    "reviewed branch": 'REF = "main"',
+    "full source pin": f'EXPECTED_SOURCE_COMMIT = "{COMMIT}"',
+    "Git tree pin": f'EXPECTED_SOURCE_TREE = "{TREE}"',
+    "source classification": 'SOURCE_KIND = "PINNED_MAIN_COMMIT"',
+    "secure private clone": "GIT_ASKPASS",
+    "no shallow clone": '"--branch", REF, "--single-branch",',
+    "detached checkout": '"checkout", "--detach", EXPECTED_SOURCE_COMMIT',
+    "branch ancestry": '"merge-base", "--is-ancestor", EXPECTED_SOURCE_COMMIT',
+    "exact commit gate": "if sha != EXPECTED_SOURCE_COMMIT:",
+    "exact tree gate": "if commit_tree != EXPECTED_SOURCE_TREE:",
+    "Git object validation": 'git("fsck", "--full", "--strict", "--no-reflogs", "--no-progress", cwd=REPO)',
     "clean checkout": 'git("status", "--porcelain", cwd=REPO)',
-}.items():
-    if marker not in all_text:
-        errors.append(f"missing source integrity check: {name}")
+    "local PostgreSQL isolation": 'DB_NAME = f"vault_demo_db_{RUN_ID}"',
+    "full Rails tests": "bin/rails test",
+    "Selenium tests": "bin/rails test:system",
+    "test-only umask": "umask 022",
+    "synthetic fixture": "demo:fixture",
+    "Rails readiness": "RAILS_DB_READINESS=PASS",
+    "tunnel health gate": "RAILS_HEALTH=PASS",
+    "private test credentials": "GH_READ_TOKEN",
+    "UI screenshots": "script/capture-showcase",
+    "showcase archive": "script/build-public-showcase",
+}
+for desc, marker in required.items():
+    if marker not in body:
+        errors.append(f"missing {desc}")
 
-if any(x in all_text for x in ("--allowed-mail", "ACCESS_EMAIL", "Email you control for Cloudflare OTP")):
+clone_cell = sources[4] if len(sources) > 4 else ""
+if '"--depth", "1"' in clone_cell:
+    errors.append("a shallow one-commit main clone would lose the pinned source after later changes")
+if 'RELEASE_REF = "v1.0.0"' not in clone_cell:
+    errors.append("tagged source checkout is required for the README contract")
+if "RELEASE_APPLICATION_DRIFT=NONE" not in clone_cell:
+    errors.append("release must reject executable drift")
+if '"checkout", "--detach", release_commit' not in clone_cell:
+    errors.append("must check out the full release after source pin verification")
+if "RELEASE_DOCUMENT_PATHS" not in clone_cell:
+    errors.append("explicit documentation allowlist required")
+if re.search(r"(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|BEGIN (?:RSA|OPENSSH) PRIVATE KEY)", body):
+    errors.append("notebook contains a potential hard-coded credential")
+if any(x in body for x in ("--allowed-mail", "ACCESS_EMAIL", "Email you control for Cloudflare OTP")):
     errors.append("obsolete Cloudflare OTP requirement")
-if "tunnel_proc = subprocess.Popen(" in all_text and all_text.index('print("RAILS_HEALTH=PASS') > all_text.index("tunnel_proc = subprocess.Popen("):
-    errors.append("Cloudflare must start after Rails health")
-if re.search(r"(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|BEGIN (?:RSA|OPENSSH) PRIVATE KEY)", all_text):
-    errors.append("potential embedded credential")
-for rel in ("docs/KAGGLE-SETUP.md", "docs/KAGGLE-SETUP.vi.md"):
-    if not (ROOT / rel).is_file():
-        errors.append(f"missing {rel}")
+if 'SOURCE_VERIFIED=PASS' not in body or 'SOURCE_TREE_VERIFIED=PASS' not in body:
+    errors.append("required source verification markers missing")
+
+# User-first demo contract: Explore opens the site before heavyweight tests.
+settings = sources[2] if len(sources) > 2 else ""
+startup = sources[6] if len(sources) > 6 else ""
+browser = sources[12] if len(sources) > 12 else ""
+verification = sources[14] if len(sources) > 14 else ""
+shutdown = sources[22] if len(sources) > 22 else ""
+for marker in ('DEMO_EXPERIENCE = "explore"', 'ARTIFACTS = EVIDENCE_ROOT / RUN_ID',
+               'CAPTURE_SCREENSHOTS = DEMO_EXPERIENCE == "verify"'):
+    if marker not in settings:
+        errors.append("user-first configuration missing: " + marker)
+if "bin/rails test" in startup:
+    errors.append("Explore setup must not run full tests before launching Rails")
+if 'if DEMO_EXPERIENCE == "verify":' not in verification or "bin/rails test:system" not in verification:
+    errors.append("Verify must run the complete Rails/Selenium test suites")
+if not all(marker in browser for marker in (
+        'CLOUDFLARED_VERSION = "2026.10.3"',
+        'CLOUDFLARED_SHA256 = "053b80b0a23031a038fdbf3c073f59f82b8f1f152aa67971d7383ffafc0dbab0"',
+        'if checksum(temp_binary) != CLOUDFLARED_SHA256:')):
+    errors.append("tunnel binary must be version-pinned and SHA-256 verified")
+if 'releases/latest/download/cloudflared' in body:
+    errors.append("floating unverified cloudflared binary is forbidden")
+if 'password_file = ARTIFACTS / "demo-password.txt"' not in sources[8]:
+    errors.append("password must be unique to this run")
+if not all(x in shutdown for x in ("STOP_DEMO_NOW = False", "stop_button.on_click(")):
+    errors.append("interactive stop and manual fallback are mandatory")
+for guide in (ROOT / "docs/KAGGLE-SETUP.md", ROOT / "docs/KAGGLE-SETUP.vi.md"):
+    text = guide.read_text()
+    if not all(x in text for x in ("DEMO_EXPERIENCE", "Explore", "Verify", "STOP_DEMO_NOW")):
+        errors.append(guide.name + ": outdated Explore/Verify guidance")
+
+try:
+    source_tree = subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", f"{COMMIT}^{{tree}}"],
+        stderr=subprocess.DEVNULL, text=True
+    ).strip()
+    if source_tree != TREE:
+        errors.append("pinned source SHA does not resolve to the expected Git tree")
+except subprocess.CalledProcessError:
+    errors.append("pinned source commit not present in repository history")
+
 if errors:
-    for problem in errors:
-        print("ERROR:", problem)
+    for item in errors:
+        print("ERROR:", item)
     raise SystemExit("NOTEBOOK_DEMO_CHECK=FAIL")
+
 print(f"NOTEBOOK_DEMO_CHECK=PASS cells={len(cells)} code_cells={code_count} "
-      "release_tag=validated outputs=clean")
+      f"source={COMMIT[:12]} tree={TREE[:12]} outputs=clean")

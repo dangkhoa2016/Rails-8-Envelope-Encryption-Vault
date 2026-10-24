@@ -1,9 +1,16 @@
 # Changelog
 
 > 🌐 Language / Ngôn ngữ: **English** | [Tiếng Việt](CHANGELOG.vi.md)
-## 1.0.0 — Initial Source Release
+## 1.0.0 — First Community Source Release
 
-This is the first published source release of Ruby Envelope Vault.
+The first source release of Ruby Envelope Vault provides a Rails 8 application, reproducible verification workflows, and bilingual English/Vietnamese documentation.
+
+### Review-ready improvements
+- Reactive Audit filters and stateful Vault search that keep decrypted titles and tags out of URLs.
+- In-place Favorite toggling on Vault item details, retaining URL and keyboard focus.
+- Shared accessible success/error toast notifications, including Turbo Stream updates.
+- Dependency maintenance: `crass` 1.0.8 addresses GHSA-pq4g-8rxf-4g29.
+- One reproducible Kaggle/Colab notebook that pins the reviewed application commit and its exact Git tree.
 
 ### Features
 - Rails 8 application and PostgreSQL-backed encrypted vault entries
