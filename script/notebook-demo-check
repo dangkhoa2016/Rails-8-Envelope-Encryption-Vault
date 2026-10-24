@@ -7,8 +7,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK = ROOT / "notebooks/Ruby_Envelope_Vault_Kaggle_Colab_Full_Demo.ipynb"
-COMMIT = "d0ffc2a15def747ca1b6b4e3a14cbab301663fc3"
-TREE = "8fb2e8074714249d71d397949ab0a23c8d2807ba"
+COMMIT = "cbd969b4e2bdd951e9380120e31568da0b1c61e8"
+TREE = "c74b301544162f23cee754970b4a969cb0d55b60"
 errors = []
 
 found_notebooks = sorted((ROOT / "notebooks").glob("*.ipynb"))
@@ -72,8 +72,14 @@ for desc, marker in required.items():
 clone_cell = sources[4] if len(sources) > 4 else ""
 if '"--depth", "1"' in clone_cell:
     errors.append("a shallow one-commit main clone would lose the pinned source after later changes")
-if "refs/tags/" in clone_cell or "tag_commit" in clone_cell:
-    errors.append("reviewed commit notebook must not verify itself as the immutable release tag")
+if 'RELEASE_REF = "v1.0.0"' not in clone_cell:
+    errors.append("tagged source checkout is required for the README contract")
+if "RELEASE_APPLICATION_DRIFT=NONE" not in clone_cell:
+    errors.append("release must reject executable drift")
+if '"checkout", "--detach", release_commit' not in clone_cell:
+    errors.append("must check out the full release after source pin verification")
+if "RELEASE_DOCUMENT_PATHS" not in clone_cell:
+    errors.append("explicit documentation allowlist required")
 if re.search(r"(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|BEGIN (?:RSA|OPENSSH) PRIVATE KEY)", body):
     errors.append("notebook contains a potential hard-coded credential")
 if any(x in body for x in ("--allowed-mail", "ACCESS_EMAIL", "Email you control for Cloudflare OTP")):

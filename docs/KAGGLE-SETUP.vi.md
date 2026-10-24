@@ -6,11 +6,11 @@
 
 **[Mở notebook Kaggle / Colab song ngữ hoàn chỉnh](../notebooks/Ruby_Envelope_Vault_Kaggle_Colab_Full_Demo.ipynb)**
 
-Đây là **notebook demo duy nhất được hỗ trợ trong repository**. Notebook tải lịch sử GitHub `main`, checkout dạng detached tại commit ứng dụng đã review `d0ffc2a15def747ca1b6b4e3a14cbab301663fc3` và kiểm tra Git tree chính xác `8fb2e8074714249d71d397949ab0a23c8d2807ba`. Toàn bộ lấy mã nguồn từ GitHub, không phụ thuộc Kaggle Dataset hay cơ sở dữ liệu chuẩn bị sẵn.
+Đây là **notebook demo duy nhất được hỗ trợ trong repository**. Notebook tải lịch sử GitHub `main`, xác minh commit ứng dụng đã review `cbd969b4e2bdd951e9380120e31568da0b1c61e8` và kiểm tra Git tree chính xác `c74b301544162f23cee754970b4a969cb0d55b60`. Notebook sau đó checkout tag `v1.0.0` đầy đủ có cả hai README. Danh sách chỉ cho phép khác biệt tài liệu, từ chối thay đổi executable/test không được kiểm chứng. Mã nguồn lấy từ GitHub, không phụ thuộc Kaggle Dataset.
 
-Demo bao gồm Audit lọc tức thời, Vault Search giữ trạng thái và không đưa tiêu đề/tag plaintext lên URL, Favorite tại chỗ, toast thông báo dùng chung, các item giả đã mã hóa và lịch sử phiên bản bất biến. Notebook cài Ruby 3.4, Rails 8, PostgreSQL 17, Redis; thực hiện kiểm tra crypto/security, đầy đủ bộ test Rails và Selenium, HTTP, chụp ảnh giao diện và đóng gói showcase tùy chọn.
+Demo bao gồm Audit Activity Center, timeline và lọc thời gian/kết quả, Vault Search giữ trạng thái và không đưa tiêu đề/tag plaintext lên URL, Favorite tại chỗ, toast thông báo dùng chung, các item giả đã mã hóa và lịch sử phiên bản bất biến. Notebook cài Ruby 3.4, Rails 8, PostgreSQL 17, Redis; thực hiện kiểm tra crypto/security, đầy đủ bộ test Rails và Selenium, HTTP, chụp ảnh giao diện và đóng gói showcase tùy chọn.
 
-**Nguồn gốc release:** Tag `v1.0.0` đại diện bản phát hành cộng đồng đầu tiên và bao gồm các cải tiến UX đã review. Notebook ghim commit ứng dụng ngay trước khi hoàn tất tài liệu song ngữ; commit này là tổ tiên của tag release. SHA/tree chứng minh nội dung nhất quán, không phải xác thực độc lập.
+**Nguồn gốc release:** Bản phát hành mã nguồn `v1.0.0` bao gồm Security Activity Center, bộ lọc Audit theo tài khoản và các cải tiến UX đã nghiệm thu. Notebook ghim commit ứng dụng trước commit tài liệu công bố; đó là tổ tiên của commit release. SHA/tree kiểm tra tính nhất quán nội dung, không tự chứng minh danh tính tác giả.
 
 ## Điều kiện và bảo mật
 

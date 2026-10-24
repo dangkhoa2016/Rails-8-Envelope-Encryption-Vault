@@ -6,11 +6,11 @@
 
 **[Open the complete bilingual Kaggle / Colab notebook](../notebooks/Ruby_Envelope_Vault_Kaggle_Colab_Full_Demo.ipynb)**
 
-This is the repository's **single supported demo notebook**. It clones the GitHub `main` history, detaches to the reviewed application commit `d0ffc2a15def747ca1b6b4e3a14cbab301663fc3`, and verifies its exact Git tree `8fb2e8074714249d71d397949ab0a23c8d2807ba`. All steps use source code from GitHub, not a Kaggle Dataset or prepared database.
+This is the repository's **single supported demo notebook**. It clones the GitHub `main` history, verifies the reviewed application commit `cbd969b4e2bdd951e9380120e31568da0b1c61e8`, and verifies its exact Git tree `c74b301544162f23cee754970b4a969cb0d55b60`. The notebook then checks out the complete annotated `v1.0.0` source tag containing both READMEs; a strict documentation-only difference allowlist rejects any executable/test drift. Source comes from GitHub, not a Kaggle Dataset.
 
-The notebook demonstrates reactive Audit filtering, stateful Vault search without plaintext titles/tags in URLs, in-place Favorite actions, shared toast notifications, encrypted synthetic items and immutable versions. It installs Ruby 3.4, Rails 8, PostgreSQL 17 and Redis, runs cryptographic/security preflights, the complete Rails and Selenium suites, HTTP checks, optional browser screenshots, and optional showcase packaging.
+The notebook demonstrates account-scoped Audit Activity Center, date/outcome filtering, stateful Vault search without plaintext titles/tags in URLs, in-place Favorite actions, shared toast notifications, encrypted synthetic items and immutable versions. It installs Ruby 3.4, Rails 8, PostgreSQL 17 and Redis, runs cryptographic/security preflights, the complete Rails and Selenium suites, HTTP checks, optional browser screenshots, and optional showcase packaging.
 
-**Release provenance:** The `v1.0.0` tag identifies the first community release and includes the reviewed application UX. The notebook pins the exact application commit immediately before final bilingual documentation, an ancestor of the tagged release. Commit and Git tree checks verify content consistency, not independent source authenticity.
+**Release provenance:** The `v1.0.0` source release includes Security Activity Center, account-level audit filters and the reviewed application UX. The notebook pins the audited application commit before publication documentation, an ancestor of the release commit; commit/tree verification establishes content consistency, not independent publisher authenticity.
 
 ## Requirements and security
 
