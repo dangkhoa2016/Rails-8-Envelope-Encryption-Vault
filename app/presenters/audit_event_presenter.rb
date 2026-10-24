@@ -40,6 +40,8 @@ class AuditEventPresenter
     "key.rotation_failed" => %w[from to error_class]
   }.freeze
 
+  AUTH_REQUEST_KEYS = %w[ip_address http_method request_path user_agent].freeze
+
   CONTEXT_LABELS = {
     "kind" => "Type",
     "version_number" => "Version",
@@ -52,7 +54,11 @@ class AuditEventPresenter
     "dry_run" => "Dry run",
     "rotated" => "Rotated",
     "verified" => "Verified",
-    "error_class" => "Error class"
+    "error_class" => "Error class",
+    "ip_address" => "IP address",
+    "http_method" => "Request method",
+    "request_path" => "Request path",
+    "user_agent" => "User-Agent header"
   }.freeze
 
 
@@ -74,6 +80,44 @@ class AuditEventPresenter
   end.freeze
 
   FALLBACK_DESCRIPTION = "A security-relevant vault event was recorded.".freeze
+
+  # Action names encode outcomes; no unverified status is inferred from metadata.
+  FAILED_ACTIONS = %w[
+    user.login_failed user.reauthentication_failed user.mfa_failed
+    key.rotation_failed
+  ].freeze
+  RECORDED_ACTIONS = %w[key.rotation_started].freeze
+  SENSITIVE_ACTIONS = %w[
+    user.password_changed user.mfa_enabled user.mfa_disabled
+    user.mfa_recovery_codes_regenerated vault_item.revealed
+    vault_item.exported vault_item.restored key.rotation_started
+    key.rotation_completed key.rotation_failed
+  ].freeze
+
+  def self.outcome_for(action)
+    candidate = action.to_s
+    return "failed" if FAILED_ACTIONS.include?(candidate)
+    return "recorded" if RECORDED_ACTIONS.include?(candidate) || !COPY.key?(candidate)
+
+    "completed"
+  end
+
+  def self.actions_for_outcome(outcome, actions)
+    actions.select { |action| outcome_for(action) == outcome }
+  end
+
+  def outcome
+    self.class.outcome_for(action)
+  end
+
+  def outcome_label
+    { "completed" => "Completed", "failed" => "Failed", "recorded" => "Recorded" }.fetch(outcome)
+  end
+
+  def sensitive?
+    SENSITIVE_ACTIONS.include?(action)
+  end
+
 
 
 
@@ -115,11 +159,18 @@ class AuditEventPresenter
   end
 
   def safe_context
-    SAFE_CONTEXT_KEYS.fetch(action, []).filter_map do |key|
+    allowed = SAFE_CONTEXT_KEYS.fetch(action, [])
+    allowed += AUTH_REQUEST_KEYS if AuditEvent::AUTHENTICATION_ACTIONS.include?(action)
+    fields = allowed.filter_map do |key|
       next unless metadata.key?(key)
 
-      [ CONTEXT_LABELS.fetch(key, key.humanize), display_value(metadata[key]) ]
+      [ CONTEXT_LABELS.fetch(key, key.humanize), display_value(metadata[key], key:) ]
     end
+    if AuditEvent::AUTHENTICATION_ACTIONS.include?(action) && metadata["user_agent"].present?
+      device = SessionDevicePresenter.for(metadata["user_agent"])
+      fields.insert(0, [ "Browser", device.browser ], [ "Operating system", device.operating_system ])
+    end
+    fields
   end
 
   def correlation_id
@@ -134,11 +185,11 @@ class AuditEventPresenter
 
   attr_reader :metadata, :request_id, :vault_item_id
 
-  def display_value(value)
+  def display_value(value, key: nil)
     case value
     when true then "Yes"
     when false then "No"
-    else value.to_s.first(80)
+    else value.to_s.first(key == "user_agent" ? 255 : 80)
     end
   end
 
