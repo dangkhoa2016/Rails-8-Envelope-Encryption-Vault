@@ -40,6 +40,15 @@ class AuditEventPresenterTest < ActiveSupport::TestCase
     assert_empty AuditEventPresenter.for_event(event).safe_context
   end
 
+  test "provides explicit outcomes without inferring unknown events are successful" do
+    assert_equal "failed", AuditEventPresenter.for("user.mfa_failed").outcome
+    assert_equal "completed", AuditEventPresenter.for("vault_item.created").outcome
+    assert_equal "recorded", AuditEventPresenter.for("future.unknown").outcome
+    assert_equal "recorded", AuditEventPresenter.for("key.rotation_started").outcome
+    assert AuditEventPresenter.for("vault_item.revealed").sensitive?
+    refute AuditEventPresenter.for("vault_item.favorited").sensitive?
+  end
+
   test "classifies actions into stable friendly categories" do
     assert_equal "Vault", AuditEventPresenter.category_for("vault_item.created")
     assert_equal "MFA", AuditEventPresenter.category_for("user.mfa_enabled")

@@ -1,82 +1,154 @@
-<div class="mx-auto max-w-6xl">
-  <div class="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+<div class="mx-auto max-w-6xl space-y-7" data-audit-activity-center>
+  <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
     <div>
-      <p class="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-300">Security history</p>
-      <h1 class="mt-2 text-3xl font-semibold tracking-tight">Audit log</h1>
-      <p class="mt-2 text-sm text-slate-500"><%= @total %> matching event(s)</p>
+      <p class="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-300">Security activity</p>
+      <h1 class="mt-2 text-3xl font-semibold tracking-tight text-white">Audit log</h1>
+      <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-400">Review security-sensitive activity associated with your account. Event details are intentionally limited to safe metadata.</p>
     </div>
-    <div class="space-y-3">
-      <div class="flex flex-wrap gap-2" aria-label="Audit categories">
+    <div class="rounded-xl border border-white/10 bg-white/[0.025] px-4 py-3 text-sm text-slate-400">
+      <p class="text-xs uppercase tracking-wider text-slate-500">Viewing</p>
+      <p class="mt-1 font-semibold text-slate-200" data-audit-selected-window><%= @range_options.fetch(@selected_range) %></p>
+    </div>
+  </header>
+
+  <section aria-label="Account activity summary" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div class="rounded-2xl border border-white/10 bg-white/[0.035] p-5">
+      <p class="text-xs font-medium text-slate-400">Account events</p>
+      <p class="mt-3 text-3xl font-semibold tabular-nums text-white" data-audit-summary="total"><%= @summary_total %></p>
+      <p class="mt-2 text-xs text-slate-500">During the selected period</p>
+    </div>
+    <div class="rounded-2xl border border-white/10 bg-white/[0.035] p-5">
+      <p class="text-xs font-medium text-slate-400">Sensitive actions</p>
+      <p class="mt-3 text-3xl font-semibold tabular-nums text-indigo-200" data-audit-summary="sensitive"><%= @summary_sensitive %></p>
+      <p class="mt-2 text-xs text-slate-500">Reveals, exports and security changes</p>
+    </div>
+    <div class="rounded-2xl border border-white/10 bg-white/[0.035] p-5">
+      <p class="text-xs font-medium text-slate-400">Failed checks</p>
+      <p class="mt-3 text-3xl font-semibold tabular-nums text-amber-200" data-audit-summary="failed"><%= @summary_failed %></p>
+      <p class="mt-2 text-xs text-slate-500">Account-linked failures only</p>
+    </div>
+    <div class="rounded-2xl border border-white/10 bg-white/[0.035] p-5">
+      <p class="text-xs font-medium text-slate-400">Latest recorded event</p>
+      <% if @summary_latest_at %>
+        <time class="mt-3 block text-base font-semibold text-slate-200" datetime="<%= @summary_latest_at.iso8601 %>"><%= @summary_latest_at.in_time_zone.strftime("%d %b %Y, %H:%M") %></time>
+      <% else %>
+        <p class="mt-3 text-base font-semibold text-slate-300">No events</p>
+      <% end %>
+      <p class="mt-2 text-xs text-slate-500">Displayed in your application time zone</p>
+    </div>
+  </section>
+
+  <aside class="flex gap-3 rounded-2xl border border-sky-400/15 bg-sky-400/[0.055] px-4 py-3 text-sm text-slate-300" aria-label="Audit scope">
+    <svg class="mt-0.5 h-5 w-5 shrink-0 text-sky-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 8.5v4m0 3h.01M12 3.5c4.7 0 8.5 3.8 8.5 8.5s-3.8 8.5-8.5 8.5-8.5-3.8-8.5-8.5 3.8-8.5 8.5-8.5Z" stroke-linecap="round"/></svg>
+    <p class="leading-6"><strong class="text-slate-200">Account-level scope.</strong> Unattributed sign-in failures and system-wide key rotation events are recorded separately and are not included in these counts. A zero in Failed checks does not mean there were no anonymous sign-in attempts.</p>
+  </aside>
+
+  <section class="rounded-2xl border border-white/10 bg-white/[0.025] p-4 sm:p-5" aria-label="Filter audit activity">
+    <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+      <div>
+        <h2 class="text-sm font-semibold text-slate-200">Explore activity</h2>
+        <p class="mt-1 text-xs text-slate-500"><%= @total %> matching event(s) · sorted newest first</p>
+      </div>
+      <nav class="flex flex-wrap gap-1.5" aria-label="Audit categories">
+        <%= link_to "All categories", audit_events_path(range: @selected_range, outcome: @selected_outcome), class: "rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:ring-2 focus-visible:ring-indigo-300 #{@category_filter.blank? ? "border-indigo-400/40 bg-indigo-400/10 text-indigo-100" : "border-white/10 text-slate-400 hover:border-white/20 hover:text-white"}" %>
         <% @available_categories.each do |category| %>
           <% active = @category_filter == category %>
-          <%= link_to audit_events_path(category: category), class: "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium #{active ? "border-indigo-400/30 bg-indigo-400/10 text-indigo-200" : "border-white/10 bg-white/[0.025] text-slate-400 hover:text-white"}", data: { audit_category: category } do %>
-            <span><%= category %></span><span class="rounded-full bg-black/20 px-1.5 py-0.5 tabular-nums"><%= @category_counts.fetch(category, 0) %></span>
+          <%= link_to audit_events_path(category: category, range: @selected_range, outcome: @selected_outcome), class: "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:ring-2 focus-visible:ring-indigo-300 #{active ? "border-indigo-400/40 bg-indigo-400/10 text-indigo-100" : "border-white/10 text-slate-400 hover:border-white/20 hover:text-white"}", data: { audit_category: category } do %>
+            <span><%= category %></span>
+            <span class="rounded-full bg-black/20 px-1.5 py-0.5 tabular-nums"><%= @category_counts.fetch(category, 0) %></span>
           <% end %>
         <% end %>
-      </div>
-    <% action_choices = @all_actions.map { |action| { value: action, label: AuditEventPresenter.for(action).title, category: AuditEventPresenter.category_for(action) } } %>
-    <%= form_with url: audit_events_path, method: :get, class: "flex flex-wrap items-end gap-2", data: { controller: "audit-filters", audit_filters_actions_value: action_choices.to_json } do |f| %>
-      <div>
-        <%= f.label :category, "Category", class: "block text-xs text-slate-500" %>
-        <%= f.select :category, options_for_select([["All categories", ""]] + @available_categories.map { |category| [category, category] }, @category_filter), {}, class: "mt-1 rounded-xl border border-white/10 bg-slate-950 px-3 py-2.5 text-sm", data: { audit_filters_target: "category", action: "change->audit-filters#categoryChanged" } %>
-      </div>
-      <div>
-        <%= f.label :event_action, "Action", class: "block text-xs text-slate-500" %>
-        <%= f.select :event_action, options_for_select([["All actions", ""]] + @available_actions.map { |action| [AuditEventPresenter.for(action).title, action] }, @action_filter), {}, class: "mt-1 rounded-xl border border-white/10 bg-slate-950 px-3 py-2.5 text-sm", data: { audit_filters_target: "action" } %>
-      </div>
-      <%= f.submit "Filter", class: "rounded-xl border border-white/10 px-3 py-2.5 text-sm hover:bg-white/5" %>
-      <% if @action_filter.present? || @category_filter.present? %><%= link_to "Clear", audit_events_path, class: "rounded-xl border border-white/10 px-3 py-2.5 text-sm text-slate-400" %><% end %>
-    <% end %>
+      </nav>
     </div>
-  </div>
 
-  <% if @events.empty? %>
-    <% filters_active = @action_filter.present? || @category_filter.present? %>
-    <div class="mt-7 rounded-3xl border border-dashed border-white/10 bg-white/[0.02] px-6 py-12 text-center">
-      <h2 class="text-lg font-semibold text-slate-200"><%= filters_active ? "No matching audit events" : "No security history yet" %></h2>
-      <p class="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500"><%= filters_active ? "Try another category or action, or clear the current filters." : "Security-sensitive actions such as sign-ins, vault changes, MFA updates, and session revocations will appear here." %></p>
-      <% if filters_active %><%= link_to "Clear audit filters", audit_events_path, class: "mt-4 inline-flex rounded-xl border border-white/10 px-4 py-2.5 text-sm font-medium text-slate-300 hover:bg-white/5" %><% end %>
+    <% action_choices = @all_actions.map { |action| { value: action, label: AuditEventPresenter.for(action).title, category: AuditEventPresenter.category_for(action) } } %>
+    <%= form_with url: audit_events_path, method: :get, class: "mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_auto]", data: { controller: "audit-filters", audit_filters_actions_value: action_choices.to_json } do |f| %>
+      <div>
+        <%= f.label :range, "Time range", class: "mb-1.5 block text-xs font-medium text-slate-300" %>
+        <%= f.select :range, options_for_select(@range_options.map { |value, label| [label, value] }, @selected_range), {}, class: "w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-2.5 text-sm text-slate-100 focus-visible:ring-2 focus-visible:ring-indigo-300" %>
+      </div>
+      <div>
+        <%= f.label :category, "Category", class: "mb-1.5 block text-xs font-medium text-slate-300" %>
+        <%= f.select :category, options_for_select([["All categories", ""]] + @available_categories.map { |category| [category, category] }, @category_filter), {}, class: "w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-2.5 text-sm text-slate-100 focus-visible:ring-2 focus-visible:ring-indigo-300", data: { audit_filters_target: "category", action: "change->audit-filters#categoryChanged" } %>
+      </div>
+      <div>
+        <%= f.label :event_action, "Action", class: "mb-1.5 block text-xs font-medium text-slate-300" %>
+        <%= f.select :event_action, options_for_select([["All actions", ""]] + @available_actions.map { |action| [AuditEventPresenter.for(action).title, action] }, @action_filter), {}, class: "w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-2.5 text-sm text-slate-100 focus-visible:ring-2 focus-visible:ring-indigo-300", data: { audit_filters_target: "action" } %>
+      </div>
+      <div>
+        <%= f.label :outcome, "Outcome", class: "mb-1.5 block text-xs font-medium text-slate-300" %>
+        <%= f.select :outcome, options_for_select([["All outcomes", ""]] + @outcome_options.map { |value, label| [label, value] }, @selected_outcome), {}, class: "w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-2.5 text-sm text-slate-100 focus-visible:ring-2 focus-visible:ring-indigo-300" %>
+      </div>
+      <div class="flex items-end gap-2">
+        <%= f.submit "Filter", class: "min-h-10 cursor-pointer rounded-xl bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-400 focus-visible:ring-2 focus-visible:ring-indigo-300" %>
+        <%= link_to "Reset", audit_events_path, class: "inline-flex min-h-10 items-center rounded-xl border border-white/10 px-3 py-2 text-sm text-slate-300 hover:bg-white/5 focus-visible:ring-2 focus-visible:ring-indigo-300" %>
+      </div>
+    <% end %>
+  </section>
+
+  <section aria-label="Audit timeline">
+    <div class="flex flex-wrap items-baseline justify-between gap-2">
+      <h2 class="text-lg font-semibold text-white">Activity timeline</h2>
+      <p class="text-xs text-slate-500">Times use the application time zone · newest first</p>
     </div>
-  <% else %>
-    <div class="mt-7 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.025]">
-      <div class="hidden grid-cols-[minmax(0,1fr)_260px] gap-4 border-b border-white/10 px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-600 md:grid"><span>Action</span><span>Time</span></div>
-      <div class="divide-y divide-white/5">
-        <% @events.each do |event| %>
-          <div class="grid gap-2 px-5 py-4 md:grid-cols-[minmax(0,1fr)_260px] md:items-center">
-            <% presentation = AuditEventPresenter.for_event(event) %>
-            <div class="min-w-0" data-audit-action="<%= event.action %>">
-              <div class="flex flex-wrap items-center gap-2">
-                <span class="text-sm font-medium text-slate-200"><%= presentation.title %></span>
-                <span class="rounded-full border border-indigo-400/15 bg-indigo-400/5 px-2 py-0.5 text-[10px] font-medium text-indigo-300" data-audit-event-category="<%= presentation.category %>"><%= presentation.category %></span>
-                <code class="rounded-md border border-white/5 bg-slate-950/70 px-1.5 py-0.5 text-[10px] text-slate-600"><%= event.action %></code>
-              </div>
-              <p class="mt-1 text-xs leading-5 text-slate-500"><%= presentation.description %></p>
-              <% if presentation.safe_context.any? %>
-                <dl class="mt-2 flex flex-wrap gap-1.5">
-                  <% presentation.safe_context.each do |label, value| %>
-                    <div class="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.025] px-2 py-1 text-[10px]">
-                      <dt class="text-slate-600"><%= label %>:</dt>
-                      <dd class="font-medium text-slate-400"><%= value %></dd>
+    <% if @events.empty? %>
+      <div class="mt-4 rounded-3xl border border-dashed border-white/15 bg-white/[0.025] px-6 py-12 text-center" data-audit-empty>
+        <h3 class="text-lg font-semibold text-slate-200"><%= @total.zero? && (@action_filter.present? || @category_filter.present? || @selected_outcome.present?) ? "No matching audit events" : "No activity for this period" %></h3>
+        <p class="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-400">Change the filters or time range to review other activity. Only events attributed to your account can appear here.</p>
+        <%= link_to "Clear audit filters", audit_events_path, class: "mt-5 inline-flex min-h-10 items-center rounded-xl border border-white/15 px-4 py-2.5 text-sm font-medium text-slate-200 hover:bg-white/5 focus-visible:ring-2 focus-visible:ring-indigo-300" %>
+      </div>
+    <% else %>
+      <div class="mt-4 space-y-6">
+        <% @events.group_by { |event| event.created_at.in_time_zone.to_date }.each do |day, events| %>
+          <section aria-label="Activity on <%= day.to_fs(:long) %>">
+            <h3 class="mb-3 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400"><%= day.to_fs(:long) %></h3>
+            <ol class="space-y-2">
+              <% events.each do |event| %>
+                <% presentation = AuditEventPresenter.for_event(event) %>
+                <% outcome_classes = { "completed" => "border-emerald-400/20 bg-emerald-400/10 text-emerald-200", "failed" => "border-amber-400/20 bg-amber-400/10 text-amber-200", "recorded" => "border-slate-400/20 bg-slate-400/10 text-slate-300" } %>
+                <li class="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 transition hover:border-white/20 sm:px-5" data-audit-action="<%= event.action %>" data-audit-outcome="<%= presentation.outcome %>">
+                  <div class="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+                    <div class="min-w-0">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <span class="text-sm font-semibold text-white"><%= presentation.title %></span>
+                        <span class="rounded-full border px-2.5 py-0.5 text-[11px] font-semibold <%= outcome_classes.fetch(presentation.outcome) %>"><%= presentation.outcome_label %></span>
+                        <span class="rounded-full border border-indigo-400/20 bg-indigo-400/[0.07] px-2.5 py-0.5 text-[11px] text-indigo-200" data-audit-event-category="<%= presentation.category %>"><%= presentation.category %></span>
+                        <% if presentation.sensitive? %><span class="text-[11px] font-medium text-amber-200">Sensitive action</span><% end %>
+                      </div>
+                      <p class="mt-1.5 text-sm leading-6 text-slate-400"><%= presentation.description %></p>
                     </div>
-                  <% end %>
-                </dl>
-              <% end %>
-              <% if presentation.item_reference || presentation.correlation_id %>
-                <details class="mt-2 text-[11px] text-slate-700">
-                  <summary class="cursor-pointer hover:text-slate-500">Technical context</summary>
-                  <div class="mt-1 space-y-1 font-mono">
-                    <% if presentation.item_reference %><div>item: <%= presentation.item_reference %>…</div><% end %>
-                    <% if presentation.correlation_id %><div>request: <%= presentation.correlation_id %>…</div><% end %>
+                    <time class="shrink-0 text-xs font-medium tabular-nums text-slate-400" datetime="<%= event.created_at.iso8601 %>"><%= event.created_at.in_time_zone.strftime("%H:%M:%S") %></time>
                   </div>
-                </details>
+                  <% if presentation.safe_context.any? || presentation.item_reference || presentation.correlation_id %>
+                    <details class="group mt-3 rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2">
+                      <summary class="min-h-7 cursor-pointer select-none text-xs font-medium text-slate-300 focus-visible:outline-2 focus-visible:outline-indigo-300">Event details <span class="ml-1 text-slate-500">(safe context only)</span></summary>
+                      <div class="mt-3 border-t border-white/10 pt-3">
+                        <% if presentation.safe_context.any? %>
+                          <dl class="flex flex-wrap gap-2">
+                            <% presentation.safe_context.each do |label, value| %>
+                              <div class="rounded-lg border border-white/10 px-2.5 py-1.5 text-xs">
+                                <dt class="text-slate-500"><%= label %></dt>
+                                <dd class="mt-0.5 break-all font-medium text-slate-300"><%= value %></dd>
+                              </div>
+                            <% end %>
+                          </dl>
+                        <% end %>
+                        <% if presentation.item_reference || presentation.correlation_id %>
+                          <dl class="mt-3 space-y-1 font-mono text-xs text-slate-400">
+                            <% if presentation.item_reference %><div><dt class="inline text-slate-500">Item reference:</dt> <dd class="inline"><%= presentation.item_reference %>…</dd></div><% end %>
+                            <% if presentation.correlation_id %><div><dt class="inline text-slate-500">Request reference:</dt> <dd class="inline"><%= presentation.correlation_id %>…</dd></div><% end %>
+                          </dl>
+                        <% end %>
+                      </div>
+                    </details>
+                  <% end %>
+                </li>
               <% end %>
-            </div>
-            <time class="text-sm text-slate-500" datetime="<%= event.created_at.iso8601 %>"><%= event.created_at.to_fs(:long) %></time>
-          </div>
+            </ol>
+          </section>
         <% end %>
       </div>
-    </div>
-
-    <%= render "shared/pagination", pagy: @pagy, label: "Audit pagination" if @total_pages > 1 %>
-  <% end %>
+      <%= render "shared/pagination", pagy: @pagy, label: "Audit pagination" if @total_pages > 1 %>
+    <% end %>
+  </section>
 </div>

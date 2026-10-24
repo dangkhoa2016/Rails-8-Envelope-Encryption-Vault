@@ -75,6 +75,44 @@ class AuditEventPresenter
 
   FALLBACK_DESCRIPTION = "A security-relevant vault event was recorded.".freeze
 
+  # Action names encode outcomes; no unverified status is inferred from metadata.
+  FAILED_ACTIONS = %w[
+    user.login_failed user.reauthentication_failed user.mfa_failed
+    key.rotation_failed
+  ].freeze
+  RECORDED_ACTIONS = %w[key.rotation_started].freeze
+  SENSITIVE_ACTIONS = %w[
+    user.password_changed user.mfa_enabled user.mfa_disabled
+    user.mfa_recovery_codes_regenerated vault_item.revealed
+    vault_item.exported vault_item.restored key.rotation_started
+    key.rotation_completed key.rotation_failed
+  ].freeze
+
+  def self.outcome_for(action)
+    candidate = action.to_s
+    return "failed" if FAILED_ACTIONS.include?(candidate)
+    return "recorded" if RECORDED_ACTIONS.include?(candidate) || !COPY.key?(candidate)
+
+    "completed"
+  end
+
+  def self.actions_for_outcome(outcome, actions)
+    actions.select { |action| outcome_for(action) == outcome }
+  end
+
+  def outcome
+    self.class.outcome_for(action)
+  end
+
+  def outcome_label
+    { "completed" => "Completed", "failed" => "Failed", "recorded" => "Recorded" }.fetch(outcome)
+  end
+
+  def sensitive?
+    SENSITIVE_ACTIONS.include?(action)
+  end
+
+
 
 
   def self.category_for(action)
