@@ -6,7 +6,11 @@
 The first source release of Ruby Envelope Vault provides a Rails 8 application, reproducible verification workflows, and bilingual English/Vietnamese documentation.
 
 ### Review-ready improvements
+- Security Activity Center: account-scoped activity cards, 7/30/90-day filters, conservative outcomes, dated timelines and allowlisted event details.
+- Session audits show bounded browser/User-Agent, resolved IP, HTTP method/route; Vault audit entries link existing owned items.
 - Reactive Audit filters and stateful Vault search that keep decrypted titles and tags out of URLs.
+- Vault searches all authorized encrypted title/tag candidates without truncation; unfiltered pages decrypt only the selected page.
+- Vault lists Active items by default; Archive retains ciphertext and versions while Archived and All states remain explicit choices.
 - In-place Favorite toggling on Vault item details, retaining URL and keyboard focus.
 - Shared accessible success/error toast notifications, including Turbo Stream updates.
 - Dependency maintenance: `crass` 1.0.8 addresses GHSA-pq4g-8rxf-4g29.

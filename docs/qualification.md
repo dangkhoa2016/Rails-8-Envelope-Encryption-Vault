@@ -22,7 +22,7 @@ Qualification is tied to a **specific Git revision and environment**. An automat
 
 ## Reference workflow
 
-The versioned [CI workflow](../.github/workflows/ci.yml) defines the actual commands and matrices. For a recorded publication-run example, see [GitHub Actions run 39538635309](https://github.com/dangkhoa2016/Rails-8-Envelope-Encryption-Vault/actions/runs/39538635309) and the [Documentation workflow](../.github/workflows/docs.yml). Recheck the run revision whenever Git history is rewritten; historical run links do **not** automatically validate a new SHA.
+The versioned [CI workflow](../.github/workflows/ci.yml) and [Documentation workflow](../.github/workflows/docs.yml) define the checks. Review the [CI runs](https://github.com/dangkhoa2016/Rails-8-Envelope-Encryption-Vault/actions/workflows/ci.yml) and [Documentation runs](https://github.com/dangkhoa2016/Rails-8-Envelope-Encryption-Vault/actions/workflows/docs.yml) for the intended release. Count a passing run as evidence only when its head SHA matches the exact release commit; an old run or badge does not validate rewritten history.
 
 The six-job CI result from the initial release review was a **point-in-time result**, not a permanent badge value. Prefer the live workflow badge for current status.
 

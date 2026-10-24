@@ -20,6 +20,8 @@ The top-level [README](../README.md) introduces the vault, envelope encryption a
 
 - [Architecture](ARCHITECTURE.md): browser/Rails/database/KeyProvider boundaries and envelope lifecycle.
 - [Engineering overview](engineering-overview.md): component map, service responsibilities and operational decisions.
+- [Vault Search performance](VAULT-SEARCH-PERFORMANCE.md): correct encrypted search, pagination, KMS tradeoffs and reproducible synthetic benchmark.
+- [Audit Activity Center](AUDIT-ACTIVITY.md): account-only event scope, outcomes, filters and limits of the security evidence.
 - [Threat model](THREAT-MODEL.md): attackers, secrets, controls and excluded guarantees.
 - [Key management](KEY-MANAGEMENT.md): KEK generation, rotation, rollback and independent custody.
 

@@ -66,6 +66,10 @@ class AuditPaginationTest < ApplicationSystemTestCase
     assert_includes page.current_url, "range=7"
     assert_no_selector "[data-audit-action='user.mfa_failed']"
     click_link "Reset"
+    # Turbo navigation is asynchronous. Verify the unfiltered GET and fresh
+    # account-scoped result set before inspecting form state after reset.
+    assert_current_path audit_events_path, ignore_query: false
+    assert_text "17 matching event(s)"
     assert_select "Time range", selected: "Past 30 days"
     assert_select "Outcome", selected: "All outcomes"
   end
