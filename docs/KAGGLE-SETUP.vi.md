@@ -6,11 +6,11 @@
 
 **[Mở notebook Kaggle / Colab song ngữ hoàn chỉnh](../notebooks/Ruby_Envelope_Vault_Kaggle_Colab_Full_Demo.ipynb)**
 
-Đây là **notebook demo duy nhất được hỗ trợ trong repository**. Notebook tải lịch sử GitHub `main`, checkout dạng detached tại commit ứng dụng đã review `0c6dcfe43ab610dbbe9cc1cd669ce345127980da` và kiểm tra Git tree chính xác `736b3a70ba3e660028d8f8a3423ae086d10858c6`. Toàn bộ lấy mã nguồn từ GitHub, không phụ thuộc Kaggle Dataset hay cơ sở dữ liệu chuẩn bị sẵn.
+Đây là **notebook demo duy nhất được hỗ trợ trong repository**. Notebook tải lịch sử GitHub `main`, checkout dạng detached tại commit ứng dụng đã review `de9f7cef10fbc564dca57c19b021b8b8e4f9501c` và kiểm tra Git tree chính xác `588a8eb98fecde5750a6c431e812b5e3bd1f3d43`. Toàn bộ lấy mã nguồn từ GitHub, không phụ thuộc Kaggle Dataset hay cơ sở dữ liệu chuẩn bị sẵn.
 
-Demo bao gồm Audit lọc tức thời, Vault Search giữ trạng thái và không đưa tiêu đề/tag plaintext lên URL, Favorite tại chỗ, toast thông báo dùng chung, các item giả đã mã hóa và lịch sử phiên bản bất biến. Notebook cài Ruby 3.4, Rails 8, PostgreSQL 17, Redis; thực hiện kiểm tra crypto/security, đầy đủ bộ test Rails và Selenium, HTTP, chụp ảnh giao diện và đóng gói showcase tùy chọn.
+Demo bao gồm Audit Activity Center, timeline và lọc thời gian/kết quả, Vault Search giữ trạng thái và không đưa tiêu đề/tag plaintext lên URL, Favorite tại chỗ, toast thông báo dùng chung, các item giả đã mã hóa và lịch sử phiên bản bất biến. Notebook cài Ruby 3.4, Rails 8, PostgreSQL 17, Redis; thực hiện kiểm tra crypto/security, đầy đủ bộ test Rails và Selenium, HTTP, chụp ảnh giao diện và đóng gói showcase tùy chọn.
 
-**Nguồn gốc release:** Tag `v1.0.0` đại diện bản phát hành cộng đồng đầu tiên và bao gồm các cải tiến UX đã review. Notebook ghim commit ứng dụng ngay trước khi hoàn tất tài liệu song ngữ; commit này là tổ tiên của tag release. SHA/tree chứng minh nội dung nhất quán, không phải xác thực độc lập.
+**Nguồn gốc release:** Tag `v1.0.0` là bản công bố cộng đồng đầu tiên. Security Activity Center thuộc nhánh cải tiến tiếp theo. Notebook ghim commit ứng dụng ngay trước khi hoàn tất tài liệu song ngữ; commit này sẽ là tổ tiên của `main` khi feature branch được tích hợp; CI đang kiểm tra trực tiếp branch. SHA/tree chứng minh nội dung nhất quán, không phải xác thực độc lập.
 
 ## Điều kiện và bảo mật
 

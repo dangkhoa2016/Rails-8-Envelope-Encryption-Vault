@@ -7,8 +7,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK = ROOT / "notebooks/Ruby_Envelope_Vault_Kaggle_Colab_Full_Demo.ipynb"
-COMMIT = "0c6dcfe43ab610dbbe9cc1cd669ce345127980da"
-TREE = "736b3a70ba3e660028d8f8a3423ae086d10858c6"
+COMMIT = "de9f7cef10fbc564dca57c19b021b8b8e4f9501c"
+TREE = "588a8eb98fecde5750a6c431e812b5e3bd1f3d43"
 errors = []
 
 found_notebooks = sorted((ROOT / "notebooks").glob("*.ipynb"))

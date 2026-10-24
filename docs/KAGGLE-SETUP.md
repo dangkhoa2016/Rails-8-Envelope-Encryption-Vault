@@ -6,11 +6,11 @@
 
 **[Open the complete bilingual Kaggle / Colab notebook](../notebooks/Ruby_Envelope_Vault_Kaggle_Colab_Full_Demo.ipynb)**
 
-This is the repository's **single supported demo notebook**. It clones the GitHub `main` history, detaches to the reviewed application commit `0c6dcfe43ab610dbbe9cc1cd669ce345127980da`, and verifies its exact Git tree `736b3a70ba3e660028d8f8a3423ae086d10858c6`. All steps use source code from GitHub, not a Kaggle Dataset or prepared database.
+This is the repository's **single supported demo notebook**. It clones the GitHub `main` history, detaches to the reviewed application commit `de9f7cef10fbc564dca57c19b021b8b8e4f9501c`, and verifies its exact Git tree `588a8eb98fecde5750a6c431e812b5e3bd1f3d43`. All steps use source code from GitHub, not a Kaggle Dataset or prepared database.
 
-The notebook demonstrates reactive Audit filtering, stateful Vault search without plaintext titles/tags in URLs, in-place Favorite actions, shared toast notifications, encrypted synthetic items and immutable versions. It installs Ruby 3.4, Rails 8, PostgreSQL 17 and Redis, runs cryptographic/security preflights, the complete Rails and Selenium suites, HTTP checks, optional browser screenshots, and optional showcase packaging.
+The notebook demonstrates account-scoped Audit Activity Center, date/outcome filtering, stateful Vault search without plaintext titles/tags in URLs, in-place Favorite actions, shared toast notifications, encrypted synthetic items and immutable versions. It installs Ruby 3.4, Rails 8, PostgreSQL 17 and Redis, runs cryptographic/security preflights, the complete Rails and Selenium suites, HTTP checks, optional browser screenshots, and optional showcase packaging.
 
-**Release provenance:** The `v1.0.0` tag identifies the first community release and includes the reviewed application UX. The notebook pins the exact application commit immediately before final bilingual documentation, an ancestor of the tagged release. Commit and Git tree checks verify content consistency, not independent source authenticity.
+**Release provenance:** The `v1.0.0` tag identifies the initial community release. Security Activity Center is a post-tag improvement proposed for the next release. The notebook pins the exact application commit immediately before final bilingual documentation, an ancestor of `main` once this branch is integrated; branch CI validates it before that point. Commit and Git tree checks verify content consistency, not independent source authenticity.
 
 ## Requirements and security
 
