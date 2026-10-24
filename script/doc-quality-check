@@ -9,6 +9,27 @@ import subprocess
 ROOT=Path(__file__).resolve().parents[1]
 docs=sorted(ROOT/p for p in subprocess.check_output(['git','-C',str(ROOT),'ls-files','--cached','--others','--exclude-standard','--','*.md'],text=True).splitlines())
 errors=[]
+
+# Public project identity must stay consistent across the docs, release notebook,
+# and web layouts. Code paths, filenames and internal identifiers are not renamed.
+CANONICAL_PROJECT_TITLE = 'Rails 8 Envelope Encryption Vault'
+OBSOLETE_PROJECT_TITLE = 'Ruby' + ' Envelope Vault'
+for brand_path in ROOT.rglob('*.md'):
+    if '.git' in brand_path.parts or 'node_modules' in brand_path.parts:
+        continue
+    if OBSOLETE_PROJECT_TITLE in brand_path.read_text(errors='replace'):
+        errors.append(f'Obsolete project name: {brand_path.relative_to(ROOT)}')
+for brand_path in [
+    ROOT / 'notebooks/Rails_8_Envelope_Encryption_Vault_Kaggle_Colab_Demo.ipynb',
+    ROOT / 'app/views/layouts/application.html.erb',
+    ROOT / 'app/views/layouts/error.html.erb',
+    ROOT / 'app/views/errors/show.html.erb',
+]:
+    if OBSOLETE_PROJECT_TITLE in brand_path.read_text(errors='replace'):
+        errors.append(f'Obsolete public-facing project name: {brand_path.relative_to(ROOT)}')
+for brand_path in [ROOT / 'README.md', ROOT / 'README.vi.md']:
+    if not brand_path.read_text().startswith('# ' + CANONICAL_PROJECT_TITLE + '\n'):
+        errors.append(f'Incorrect canonical README heading: {brand_path.name}')
 # Repository convention: keep the GitHub landing pages at the root;
 # store every other narrative Markdown pair in docs/ or .github/.
 root_pages=[p.relative_to(ROOT).as_posix() for p in docs if p.parent==ROOT and p.name not in ("README.md", "README.vi.md")]
@@ -92,21 +113,17 @@ def reachable_commit(sha):
                            sha, 'HEAD'], stdout=subprocess.DEVNULL,
                           stderr=subprocess.DEVNULL).returncode == 0
 
-# The lint workflow uses a shallow checkout. Only the commit/tree pins that
-# are independently checked by the full-history Documentation workflow may
-# be unresolved in that shallow view. No other missing SHA is trusted.
-pin_validator = (ROOT / 'script/notebook-demo-check').read_text()
-pin_commit = re.search(r'^COMMIT = "([a-f0-9]{40})"$', pin_validator, re.MULTILINE)
-pin_tree = re.search(r'^TREE = "([a-f0-9]{40})"$', pin_validator, re.MULTILINE)
-if not pin_commit or not pin_tree:
-    errors.append('Missing strict notebook application commit/tree pins')
-    shallow_pins = set()
-else:
-    shallow_pins = {pin_commit.group(1), pin_tree.group(1)}
-is_shallow = subprocess.run(
-    ['git', '-C', str(ROOT), 'rev-parse', '--is-shallow-repository'],
-    capture_output=True, text=True
-).stdout.strip() == 'true'
+# The notebook uses an annotated release tag rather than a historical SHA.
+# A self-referential final commit hash cannot safely live within that commit.
+# Its executable release-source contract is tested separately in the
+# notebook validator (including local negative Git-tag fixtures).
+notebook_validator = (ROOT / 'script/notebook-demo-check').read_text()
+notebook_config = (ROOT / 'notebooks/Rails_8_Envelope_Encryption_Vault_Kaggle_Colab_Demo.ipynb').read_text()
+if not all(marker in notebook_validator for marker in ('RELEASE_TAG_INVALID',
+    'RELEASE_TAG_NOT_ON_MAIN', 'RELEASE_VERSION_MISMATCH', 'run_source_contract_fixtures')):
+    errors.append('Missing executable tagged-release source verification tests')
+if 'ANNOTATED_RELEASE_TAG' not in notebook_config or 'RELEASE_REF' not in notebook_config:
+    errors.append('Missing release-anchored notebook source configuration')
 
 for doc in docs:
     body = doc.read_text()
@@ -117,7 +134,7 @@ for doc in docs:
         if kind == 'commit':
             if not reachable_commit(sha):
                 errors.append(where + ': commit outside current HEAD history ' + sha)
-        elif kind != 'tree' and not (is_shallow and sha in shallow_pins):
+        elif kind != 'tree':
             errors.append(where + ': unknown or unsupported 40-character Git object ' + sha)
     for match in COMMIT_URL.finditer(body):
         sha = match.group(1).lower()

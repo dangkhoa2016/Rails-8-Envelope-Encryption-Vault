@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Verify the pinned application commit and its Git tree
+          fetch-depth: 0 # Validate Git history and the release-anchored notebook contract
       - name: Check English/Vietnamese parity and local links
         run: python3 script/doc-quality-check
       - name: Validate the single reproducible Kaggle / Colab notebook
