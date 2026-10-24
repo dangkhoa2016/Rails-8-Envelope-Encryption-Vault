@@ -9,10 +9,6 @@ ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK = ROOT / "notebooks/Ruby_Envelope_Vault_Kaggle_Colab_Full_Demo.ipynb"
 COMMIT = "7f58d38c857893e5f167e57d5d0128957d55b1f5"
 TREE = "0aba267ca3b8272d431359c391d0d57b1ae2822a"
-# The canonical notebook is introduced by the following feature commit.
-if not NOTEBOOK.is_file():
-    print("NOTEBOOK_DEMO_CHECK=NOT_APPLICABLE (notebook not yet published)")
-    raise SystemExit(0)
 errors = []
 
 found_notebooks = sorted((ROOT / "notebooks").glob("*.ipynb"))
