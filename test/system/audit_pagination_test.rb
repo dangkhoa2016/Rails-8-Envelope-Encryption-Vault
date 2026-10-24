@@ -29,10 +29,16 @@ class AuditPaginationTest < ApplicationSystemTestCase
     assert_selector "[data-audit-action='vault_item.created']", count: 10
     assert_no_selector "[data-audit-action='vault_item.updated']"
 
-    click_link "Next", match: :first
+    # Wait for the *next* Turbo visit to complete, not just the old DOM.
+    # The previous page may still be visible while the new frame navigates.
+    next_link = find("nav[aria-label='Audit pagination'] a[rel='next']")
+    assert_match(/(?:\?|&)page=3(?:&|$)/, next_link[:href])
+    next_link.click
+    assert_current_path(/(?:\?|&)page=3(?:&|$)/)
     assert_text "Page 3 of 3"
     assert_selector "[data-audit-action='vault_item.created']", count: 6
     click_link "Previous"
+    assert_current_path(/(?:\?|&)page=2(?:&|$)/)
     assert_text "Page 2 of 3"
   end
   test "time range and outcome filters preserve pagination and account-scoped totals" do
@@ -66,6 +72,10 @@ class AuditPaginationTest < ApplicationSystemTestCase
     assert_includes page.current_url, "range=7"
     assert_no_selector "[data-audit-action='user.mfa_failed']"
     click_link "Reset"
+    # Turbo navigation is asynchronous. Verify the unfiltered GET and fresh
+    # account-scoped result set before inspecting form state after reset.
+    assert_current_path audit_events_path, ignore_query: false
+    assert_text "17 matching event(s)"
     assert_select "Time range", selected: "Past 30 days"
     assert_select "Outcome", selected: "All outcomes"
   end

@@ -22,7 +22,7 @@ Kết quả nghiệm thu luôn gắn với **SHA Git và môi trường cụ th�
 
 ## Workflow tham chiếu
 
-[Cấu hình CI](../.github/workflows/ci.yml) xác định chính xác các lệnh và ma trận chạy. Ví dụ đợt nghiệm thu ban đầu: [GitHub Actions run 39538635309](https://github.com/dangkhoa2016/Rails-8-Envelope-Encryption-Vault/actions/runs/39538635309), kèm [workflow tài liệu](../.github/workflows/docs.yml). Sau khi rewrite Git history, phải xác minh lại SHA: liên kết run cũ **không** tự động chứng minh commit SHA mới đã PASS.
+[Cấu hình CI](../.github/workflows/ci.yml) và [workflow tài liệu](../.github/workflows/docs.yml) xác định các lệnh kiểm tra. Xem [các lần chạy CI](https://github.com/dangkhoa2016/Rails-8-Envelope-Encryption-Vault/actions/workflows/ci.yml) và [các lần chạy Documentation](https://github.com/dangkhoa2016/Rails-8-Envelope-Encryption-Vault/actions/workflows/docs.yml) của bản phát hành tương ứng. Chỉ coi một lần chạy là bằng chứng khi trạng thái PASS và head SHA khớp đúng commit phát hành; xác minh trên đúng revision đang xem xét.
 
 
 ## Danh sách kiểm tra mã nguồn
