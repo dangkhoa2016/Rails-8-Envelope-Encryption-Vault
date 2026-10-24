@@ -101,11 +101,17 @@ Runtime chính được ghim tại [Ruby 3.4.11](.ruby-version); CI còn kiểm 
 | Phiên bản mã hóa | Mỗi lần cập nhật tạo phiên bản mã hóa mới; khôi phục tạo một phiên bản mới thay vì sửa lịch sử |
 | Quyền truy cập | Reveal/export có kiểm tra quyền, xác thực lại với hành động nhạy cảm, cách ly dữ liệu theo chủ sở hữu |
 | Bảo vệ tài khoản | TOTP MFA, recovery code được băm, hết hạn/thu hồi session và giới hạn tần suất |
-| Kiểm toán | Audit event và metadata cho các thao tác liên quan đến bảo mật |
+| Kiểm toán | Security Activity Center theo tài khoản, lọc theo thời gian/kết quả, timeline và chi tiết an toàn (tính năng sau v1.0.0) |
 | Vận hành KEK | Tạo/xác minh KEK, khóa cũ chỉ phục vụ giải mã, bọc lại DEK, chẩn đoán provider |
 | Phục hồi | Dump PostgreSQL được mã hóa bằng age, kiểm tra SHA-256, restore có kiểm soát, diễn tập giải mã canary |
 
 Đây **không phải** một hệ thống quản lý bí mật dùng chung cho doanh nghiệp đã công bố cam kết SLA/HA. Cần đánh giá mô hình phân quyền và giả định vận hành trước khi mở rộng.
+
+## Security Activity Center (đang review)
+
+**Security Activity Center** mới bổ sung thống kê sự kiện theo tài khoản, lọc 7/30/90 ngày hoặc toàn bộ lịch sử, outcome Completed/Failed/Recorded, timeline responsive và thông tin chi tiết được giới hạn an toàn. Chỉ những sự kiện được ghi nhận cho tài khoản đã đăng nhập mới xuất hiện. Đăng nhập thất bại không xác định danh tính và key rotation toàn hệ thống **không được tính** vào các số liệu cá nhân.
+
+Đây là cải tiến đề xuất **sau tag công khai `v1.0.0`**, tag hiện tại không thay đổi. Timeline này không phải công cụ phát hiện xâm nhập toàn hệ thống hay log chống sửa đổi bằng mật mã. Đọc [tài liệu bảo mật Audit song ngữ](docs/AUDIT-ACTIVITY.vi.md) và kiểm tra CI feature branch trước khi coi tính năng đã phát hành.
 
 ## Kiến trúc hệ thống
 
@@ -324,6 +330,7 @@ Tất cả các tài liệu bên dưới đều có cặp EN/VI và liên kết 
 | Kiến trúc | [Kiến trúc](docs/ARCHITECTURE.vi.md) | [Architecture](docs/ARCHITECTURE.md) |
 | Thiết kế kỹ thuật | [Tổng quan](docs/engineering-overview.vi.md) | [Engineering overview](docs/engineering-overview.md) |
 | Mô hình bảo mật | [Mô hình đe dọa](docs/THREAT-MODEL.vi.md) | [Threat model](docs/THREAT-MODEL.md) |
+| Audit theo tài khoản | [Trung tâm Audit](docs/AUDIT-ACTIVITY.vi.md) | [Audit Activity Center](docs/AUDIT-ACTIVITY.md) |
 | KEK và xoay khóa | [Quản lý khóa](docs/KEY-MANAGEMENT.vi.md) | [Key management](docs/KEY-MANAGEMENT.md) |
 | Môi trường demo | [Thiết lập notebook](docs/KAGGLE-SETUP.vi.md) | [Notebook setup](docs/KAGGLE-SETUP.md) |
 | Backup và DR | [Sao lưu và phục hồi](docs/BACKUP-RESTORE.vi.md) | [Backup and restore](docs/BACKUP-RESTORE.md) |

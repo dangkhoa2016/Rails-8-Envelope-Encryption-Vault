@@ -101,11 +101,17 @@ The pinned runtime is [Ruby 3.4.11](.ruby-version); CI also exercises Ruby 4.0 c
 | Encrypted versions | Every update creates a new encrypted version; restore creates a new version instead of changing history in place |
 | Controlled access | Authorized reveal/export, reauthentication for sensitive actions, per-user ownership checks |
 | Account protection | TOTP MFA, hashed recovery codes, session expiry/revocation and rate-limiting controls |
-| Auditability | Application audit events and metadata for security-relevant actions |
+| Auditability | Account-scoped Security Activity Center with time/outcome filters, clear event timeline and safe detail previews (post-v1.0.0 feature) |
 | KEK operations | Generate/verify KEKs, read-only older keys, DEK rewrapping and provider diagnostics |
 | Recovery operations | age-encrypted PostgreSQL dumps, SHA-256 checks, guarded restore and canary-decrypt DR rehearsal |
 
 This is **not** a shared team secret manager with a published high-availability service-level guarantee; evaluate its existing access model and operational assumptions before extending it.
+
+## Security Activity Center (under review)
+
+The upcoming **Security Activity Center** improves Audit Log with account-linked security metrics, 7/30/90-day or all-time filtering, explicit Completed/Failed/Recorded outcomes, responsive timelines and safe event details. Only events attributed to your authenticated account are displayed. Anonymous sign-in failures and system-wide key rotations are **not** represented in personal metrics.
+
+This work is proposed after the public `v1.0.0` source tag, which remains unchanged. The account timeline is not an operator-wide intrusion monitoring feed or a cryptographically tamper-evident system log. Read the [bilingual Audit security specification](docs/AUDIT-ACTIVITY.md) and verify the feature-branch CI before treating it as released.
 
 ## System architecture
 
@@ -324,6 +330,7 @@ Every item below has an EN/VI counterpart and a language switch.
 | Architecture | [Architecture](docs/ARCHITECTURE.md) | [Kiến trúc](docs/ARCHITECTURE.vi.md) |
 | Engineering design | [Overview](docs/engineering-overview.md) | [Tổng quan](docs/engineering-overview.vi.md) |
 | Security posture | [Threat model](docs/THREAT-MODEL.md) | [Mô hình đe dọa](docs/THREAT-MODEL.vi.md) |
+| Account Audit Activity | [Audit Activity Center](docs/AUDIT-ACTIVITY.md) | [Trung tâm Audit](docs/AUDIT-ACTIVITY.vi.md) |
 | KEK custody and rotation | [Key management](docs/KEY-MANAGEMENT.md) | [Quản lý khóa](docs/KEY-MANAGEMENT.vi.md) |
 | Development demo | [Notebook setup](docs/KAGGLE-SETUP.md) | [Thiết lập notebook](docs/KAGGLE-SETUP.vi.md) |
 | Backup and DR | [Backup and restore](docs/BACKUP-RESTORE.md) | [Sao lưu và phục hồi](docs/BACKUP-RESTORE.vi.md) |
