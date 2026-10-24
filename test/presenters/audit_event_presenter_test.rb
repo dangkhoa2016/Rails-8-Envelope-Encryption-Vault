@@ -40,6 +40,34 @@ class AuditEventPresenterTest < ActiveSupport::TestCase
     assert_empty AuditEventPresenter.for_event(event).safe_context
   end
 
+  test "provides explicit outcomes without inferring unknown events are successful" do
+    assert_equal "failed", AuditEventPresenter.for("user.mfa_failed").outcome
+    assert_equal "completed", AuditEventPresenter.for("vault_item.created").outcome
+    assert_equal "recorded", AuditEventPresenter.for("future.unknown").outcome
+    assert_equal "recorded", AuditEventPresenter.for("key.rotation_started").outcome
+    assert AuditEventPresenter.for("vault_item.revealed").sensitive?
+    refute AuditEventPresenter.for("vault_item.favorited").sensitive?
+  end
+
+  test "presents bounded request headers and a friendly device description only for session events" do
+    event = AuditEvent.new(action: "user.login_succeeded", metadata: {
+      "user_agent" => "Mozilla/5.0 (Windows NT 10.0) Chrome/125.0",
+      "ip_address" => "203.0.113.15", "request_path" => "/session",
+      "http_method" => "POST", "bad_data" => "NEVER-SHOW"
+    })
+    fields = AuditEventPresenter.for_event(event).safe_context.to_h
+    assert_equal "Chrome", fields.fetch("Browser")
+    assert_equal "Windows", fields.fetch("Operating system")
+    assert_equal "203.0.113.15", fields.fetch("IP address")
+    assert_equal "POST", fields.fetch("Request method")
+    assert_equal "/session", fields.fetch("Request path")
+    assert_includes fields.fetch("User-Agent header"), "Chrome/125"
+    refute_includes fields.values, "NEVER-SHOW"
+
+    other = AuditEvent.new(action: "vault_item.created", metadata: event.metadata)
+    refute_includes AuditEventPresenter.for_event(other).safe_context.flatten, "203.0.113.15"
+  end
+
   test "classifies actions into stable friendly categories" do
     assert_equal "Vault", AuditEventPresenter.category_for("vault_item.created")
     assert_equal "MFA", AuditEventPresenter.category_for("user.mfa_enabled")

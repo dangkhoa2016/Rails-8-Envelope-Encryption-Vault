@@ -10,10 +10,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Verify the notebook against the v1.0.0 annotated source tag
+          fetch-depth: 0 # Verify the pinned application commit and its Git tree
       - name: Check English/Vietnamese parity and local links
         run: python3 script/doc-quality-check
-      - name: Validate executable notebook source and release pin
+      - name: Validate the single reproducible Kaggle / Colab notebook
         run: python3 script/notebook-demo-check
       - name: Check published documentation links
         run: bash script/doc-link-check

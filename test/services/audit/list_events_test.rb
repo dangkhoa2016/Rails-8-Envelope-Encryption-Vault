@@ -62,6 +62,71 @@ class AuditListEventsTest < ActiveSupport::TestCase
   end
 
 
+  test "summaries and outcome filters exclude other users and unattributed security events" do
+    AuditEvent.create!(user: @user, action: "vault_item.revealed", metadata: {})
+    AuditEvent.create!(user: @user, action: "user.mfa_failed", metadata: {})
+    AuditEvent.create!(user: @user, action: "user.login_succeeded", metadata: {})
+    AuditEvent.create!(user: @other_user, action: "user.mfa_failed", metadata: {})
+    AuditEvent.create!(action: "user.login_failed", metadata: {})
+    AuditEvent.create!(action: "key.rotation_failed", metadata: {})
+
+    all = Audit::ListEvents.call(user: @user, range: "30")
+    assert_equal 3, all.summary_total
+    assert_equal 1, all.summary_sensitive
+    assert_equal 1, all.summary_failed
+    assert_equal 3, all.total
+    assert all.events.all? { |event| event.user_id == @user.id }
+
+    failed = Audit::ListEvents.call(user: @user, outcome: "failed")
+    completed = Audit::ListEvents.call(user: @user, outcome: "completed")
+    assert_equal [ "user.mfa_failed" ], failed.events.map(&:action)
+    assert_equal %w[user.login_succeeded vault_item.revealed], completed.events.map(&:action).sort
+    assert_equal 3, failed.summary_total # KPI is not incorrectly reduced by the outcome filter
+    assert_equal "failed", failed.selected_outcome
+  end
+
+  test "validates time windows and excludes old entries from period summaries" do
+    AuditEvent.create!(user: @user, action: "vault_item.created", metadata: {}, created_at: 120.days.ago)
+    AuditEvent.create!(user: @user, action: "vault_item.revealed", metadata: {})
+
+    recent = Audit::ListEvents.call(user: @user, range: "7")
+    all = Audit::ListEvents.call(user: @user, range: "all")
+    invalid = Audit::ListEvents.call(user: @user, range: "999999", outcome: "unexpected")
+
+    assert_equal 1, recent.summary_total
+    assert_equal 1, recent.total
+    assert_equal 2, all.summary_total
+    assert_equal 2, all.total
+    assert_equal "30", invalid.selected_range
+    assert_nil invalid.selected_outcome
+    assert_equal 1, invalid.total
+  end
+
+  test "pagination and outcome category filters remain user scoped" do
+    13.times { AuditEvent.create!(user: @user, action: "vault_item.exported", metadata: { format: "dotenv" }) }
+    3.times { AuditEvent.create!(user: @user, action: "user.mfa_failed", metadata: {}) }
+    AuditEvent.create!(user: @other_user, action: "vault_item.exported", metadata: {})
+
+    first = Audit::ListEvents.call(user: @user, category: "Vault", outcome: "completed", page: 1)
+    last = Audit::ListEvents.call(user: @user, category: "Vault", outcome: "completed", page: 2)
+
+    assert_equal 13, first.total
+    assert_equal 2, first.total_pages
+    assert_equal 10, first.events.length
+    assert_equal 3, last.events.length
+    assert_equal 16, first.summary_total
+    assert_equal 13, first.summary_sensitive
+    assert_equal 3, first.summary_failed
+    assert first.events.all? { |event| event.user_id == @user.id }
+  end
+
+  test "does not classify unknown events as successful operations" do
+    AuditEvent.create!(user: @user, action: "future.security_event", metadata: {})
+    event = Audit::ListEvents.call(user: @user, outcome: "recorded")
+    assert_equal [ "future.security_event" ], event.events.map(&:action)
+    assert_equal 1, event.summary_total
+  end
+
   test "filters future unmapped actions through Other category" do
     AuditEvent.create!(user: @user, action: "future.security_event", metadata: {})
     AuditEvent.create!(user: @user, action: "vault_item.created", metadata: {})
