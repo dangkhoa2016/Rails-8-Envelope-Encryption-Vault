@@ -35,6 +35,41 @@ class AuditPaginationTest < ApplicationSystemTestCase
     click_link "Previous"
     assert_text "Page 2 of 3"
   end
+  test "time range and outcome filters preserve pagination and account-scoped totals" do
+    user = create_system_user("audit-timeline-filter@example.test")
+    other = create_system_user("audit-timeline-other@example.test")
+    sign_in_system_user(user)
+    14.times { AuditEvent.create!(user: user, action: "vault_item.revealed", metadata: {}) }
+    2.times { AuditEvent.create!(user: user, action: "user.mfa_failed", metadata: {}) }
+    AuditEvent.create!(user: other, action: "user.mfa_failed", metadata: {})
+    AuditEvent.create!(action: "user.login_failed", metadata: {})
+
+    visit audit_events_path
+    assert_text "17 matching event(s)"
+    assert_selector "[data-audit-summary='total']", text: "17" # includes successful login
+    assert_selector "[data-audit-summary='failed']", text: "2"
+    assert_text "Account-level scope"
+    assert_selector "section[aria-label='Audit timeline']"
+    assert_selector "details summary", minimum: 0
+
+    select "Vault", from: "Category"
+    select "Completed", from: "Outcome"
+    select "Past 7 days", from: "Time range"
+    click_button "Filter"
+    assert_select "Category", selected: "Vault"
+    assert_select "Outcome", selected: "Completed"
+    assert_text "14 matching event(s)"
+    assert_selector "[data-audit-action='vault_item.revealed']", count: 10
+    click_link "Next", match: :first
+    assert_selector "[data-audit-action='vault_item.revealed']", count: 4
+    assert_includes page.current_url, "outcome=completed"
+    assert_includes page.current_url, "range=7"
+    assert_no_selector "[data-audit-action='user.mfa_failed']"
+    click_link "Reset"
+    assert_select "Time range", selected: "Past 30 days"
+    assert_select "Outcome", selected: "All outcomes"
+  end
+
   test "category choice instantly refreshes Action and clears incompatible selection" do
     user = create_system_user("audit-action-select@example.test")
     sign_in_system_user(user)

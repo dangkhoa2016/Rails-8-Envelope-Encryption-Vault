@@ -11,6 +11,7 @@ class ApplicationController < ActionController::Base
 
   def capture_request_context
     Current.request_id = request.request_id
+    Current.audit_request_details = Audit::RequestDetails.capture(request)
   end
 
   def require_mfa_enrollment_if_configured

@@ -6,6 +6,12 @@ class AuditEvent < ApplicationRecord
   validates :action, presence: true
   validate :metadata_must_not_contain_sensitive_fields
   before_validation :capture_request_id, on: :create
+  before_validation :capture_authentication_context, on: :create
+
+  AUTHENTICATION_ACTIONS = %w[
+    user.login_succeeded user.login_failed user.logout user.reauthenticated
+    user.reauthentication_failed user.mfa_failed
+  ].freeze
 
   def readonly?
     persisted?
@@ -15,6 +21,14 @@ class AuditEvent < ApplicationRecord
 
   def capture_request_id
     self.request_id ||= Current.request_id if defined?(Current)
+  end
+
+  def capture_authentication_context
+    return unless AUTHENTICATION_ACTIONS.include?(action)
+    return unless defined?(Current) && Current.audit_request_details.present?
+
+    # Only the allowlisted request snapshot may set request-origin fields.
+    self.metadata = metadata.to_h.stringify_keys.merge(Current.audit_request_details)
   end
 
   def metadata_must_not_contain_sensitive_fields
