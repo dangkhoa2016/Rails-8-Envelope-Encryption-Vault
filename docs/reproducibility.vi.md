@@ -31,7 +31,7 @@ Một phép thử có thể tái lập phải ghi rõ **revision mã nguồn**, 
 Bắt đầu bằng checkout sạch. Cấu hình PostgreSQL test database dùng một lần và KEK **giả** riêng biệt. Không load biến môi trường production để chạy test.
 
 ```bash
-git clone https://github.com/dangkhoa201/Rails-8-Envelope-Encryption-Vault.git
+git clone https://github.com/dangkhoa2016/Rails-8-Envelope-Encryption-Vault.git
 cd Rails-8-Envelope-Encryption-Vault
 git checkout v1.0.0
 git rev-parse HEAD

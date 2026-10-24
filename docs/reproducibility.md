@@ -31,7 +31,7 @@ A reproducible result identifies the **source revision**, **runtime**, **environ
 Start from a clean checkout. Configure a disposable PostgreSQL test database and **synthetic** KEK material. Never source a production environment file to run the test suite.
 
 ```bash
-git clone https://github.com/dangkhoa201/Rails-8-Envelope-Encryption-Vault.git
+git clone https://github.com/dangkhoa2016/Rails-8-Envelope-Encryption-Vault.git
 cd Rails-8-Envelope-Encryption-Vault
 git checkout v1.0.0
 git rev-parse HEAD
