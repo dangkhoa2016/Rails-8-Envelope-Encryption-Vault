@@ -20,6 +20,7 @@
 
 - [Kiến trúc](ARCHITECTURE.vi.md): ranh giới Rails/database/KeyProvider và vòng đời envelope.
 - [Tổng quan kỹ thuật](engineering-overview.vi.md): các thành phần, dịch vụ và quyết định vận hành.
+- [Hiệu năng Vault Search](VAULT-SEARCH-PERFORMANCE.vi.md): tìm kiếm chính xác, phân trang, giới hạn KMS và benchmark dữ liệu giả.
 - [Audit Activity Center](AUDIT-ACTIVITY.vi.md): ranh giới sự kiện tài khoản, kết quả, bộ lọc và giới hạn bằng chứng bảo mật.
 - [Mô hình đe dọa](THREAT-MODEL.vi.md): tác nhân, tài sản, kiểm soát và giới hạn.
 - [Quản lý khóa](KEY-MANAGEMENT.vi.md): tạo KEK, xoay, rollback và phục hồi độc lập.
@@ -37,6 +38,7 @@
 
 - [Tái lập](reproducibility.vi.md): clean checkout, CI và test tại máy.
 - [Ma trận kiểm chứng](qualification.vi.md): phân biệt PASS mã nguồn và host.
+- [Rà soát trước khi mở Public](PUBLIC-RELEASE-SECURITY-REVIEW.vi.md): kết quả quét lịch sử, giới hạn và các điều kiện công bố.
 - [Bằng chứng](evidence-index.vi.md): artifact có thể review, giới hạn và mẫu báo cáo.
 - [Accessibility](ACCESSIBILITY.vi.md), [Kế hoạch manual](ACCESSIBILITY-TEST-PLAN.vi.md): phạm vi và điều kiện còn thiếu.
 - [Ma trận kiểm chứng](qualification.vi.md), [Checklist production](PRODUCTION-CHECKLIST.vi.md): bằng chứng kiểm thử và yêu cầu nghiệm thu riêng từng host.

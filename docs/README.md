@@ -20,6 +20,7 @@ The top-level [README](../README.md) introduces the vault, envelope encryption a
 
 - [Architecture](ARCHITECTURE.md): browser/Rails/database/KeyProvider boundaries and envelope lifecycle.
 - [Engineering overview](engineering-overview.md): component map, service responsibilities and operational decisions.
+- [Vault Search performance](VAULT-SEARCH-PERFORMANCE.md): correct encrypted search, pagination, KMS tradeoffs and reproducible synthetic benchmark.
 - [Audit Activity Center](AUDIT-ACTIVITY.md): account-only event scope, outcomes, filters and limits of the security evidence.
 - [Threat model](THREAT-MODEL.md): attackers, secrets, controls and excluded guarantees.
 - [Key management](KEY-MANAGEMENT.md): KEK generation, rotation, rollback and independent custody.
@@ -37,6 +38,7 @@ The top-level [README](../README.md) introduces the vault, envelope encryption a
 
 - [Reproducibility](reproducibility.md): clean checkout, CI and local test paths.
 - [Qualification matrix](qualification.md): which PASS is source-only versus host-specific.
+- [Public-release security review](PUBLIC-RELEASE-SECURITY-REVIEW.md): history scan scope, privacy limits and remaining publication gates.
 - [Evidence index](evidence-index.md): reviewable artifacts, exclusions and reporting template.
 - [Accessibility](ACCESSIBILITY.md) and [manual test plan](ACCESSIBILITY-TEST-PLAN.md): explicit test scope and pending evidence.
 - [Qualification matrix](qualification.md) and [Production checklist](PRODUCTION-CHECKLIST.md): reproducible source evidence and deployment-specific safeguards.

@@ -54,6 +54,24 @@ if 'MIT License' not in license or 'Đăng Khoa <i.am@dangkhoa.dev>' not in lice
 readme=(ROOT/'README.md').read_text()
 for badge in ('actions/workflows/ci.yml/badge.svg','actions/workflows/docs.yml/badge.svg','license-MIT','source%20tag-v1.0.0','Rails-8','PostgreSQL-17'):
     if badge not in readme:errors.append('README badge missing: '+badge)
+# Catch release-facing errors missed by existence-only link checks.
+for landing in ("README.md", "README.vi.md"):
+    content=(ROOT/landing).read_text()
+    if r"\\n\\n" in content: errors.append(landing+": literal escaped newlines")
+    start=content.find("| Seven item templates |" if landing=="README.md" else "| Bảy mẫu bí mật |")
+    end=content.find("| Recovery operations |" if landing=="README.md" else "| Phục hồi |", start)
+    if start<0 or end<start:
+        errors.append(landing+": missing capability table")
+    elif any(not line.startswith("|") for line in content[start:end].splitlines() if line.strip()):
+        errors.append(landing+": capability table interrupted")
+    if "dangkhoa201/" in content: errors.append(landing+": incorrect GitHub owner")
+    if "39538635309" in content: errors.append(landing+": obsolete CI reference")
+    if landing=="README.md" and "upcoming **Security Activity Center**" in content:
+        errors.append(landing+": released feature still marked upcoming")
+for guide in ("docs/reproducibility.md", "docs/reproducibility.vi.md"):
+    if "github.com/dangkhoa201/" in (ROOT/guide).read_text():
+        errors.append(guide+": incorrect clone URL")
+
 must=[
 '.github/CODEOWNERS','.github/dependabot.yml','.github/workflows/ci.yml',
 '.github/workflows/docs.yml','.github/ISSUE_TEMPLATE/bug_report.yml',
