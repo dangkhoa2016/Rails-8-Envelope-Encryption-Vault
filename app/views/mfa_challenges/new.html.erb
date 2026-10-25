@@ -1,9 +1,113 @@
-<div class="mx-auto max-w-lg rounded-3xl border border-white/10 bg-white/[0.025] p-7 sm:p-9">
-  <p class="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-300">Second factor</p>
-  <h1 class="mt-3 text-3xl font-semibold tracking-tight">Two-factor authentication</h1>
-  <p class="mt-2 text-sm leading-6 text-slate-400">Enter the current code from your authenticator. One unused recovery code can also be used if your authenticator is unavailable.</p>
-  <%= form_with url: mfa_challenge_path, class: "mt-7 space-y-5" do |f| %>
-    <div><%= f.label :token, "Authentication code", class: "text-sm font-medium text-slate-300" %><%= f.text_field :token, required: true, autocomplete: "one-time-code", inputmode: "numeric", autofocus: true, class: "mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/80 px-4 py-3 font-mono tracking-widest" %></div>
-    <%= f.submit "Verify", class: "w-full rounded-xl bg-indigo-500 px-4 py-3 font-semibold" %>
-  <% end %>
+<% recovery_mode = @code_method == "recovery" %>
+<div class="mx-auto grid max-w-4xl overflow-hidden rounded-3xl border border-white/10 bg-white/[0.025] shadow-2xl shadow-black/20 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]" data-mfa-challenge>
+  <section class="min-w-0 p-6 sm:p-9 lg:p-10" aria-labelledby="mfa-challenge-title">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <span class="inline-flex items-center gap-2 rounded-full border border-indigo-400/20 bg-indigo-400/10 px-3 py-1.5 text-xs font-semibold text-indigo-200">
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M7.5 10.5V8.25a4.5 4.5 0 0 1 9 0v2.25m-10.5 0h12v9h-12v-9Z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Two-factor authentication
+      </span>
+      <span class="text-xs font-medium text-slate-400">Step 2 of 2</span>
+    </div>
+
+    <h1 id="mfa-challenge-title" class="mt-6 text-2xl font-semibold tracking-tight text-white sm:text-3xl">Verify your sign-in</h1>
+    <p class="mt-2 max-w-lg text-sm leading-6 text-slate-400">Your password was accepted. Choose a verification method to securely continue to your encrypted vault.</p>
+
+    <% if alert == "Invalid authentication code." %>
+      <div class="mt-5 rounded-2xl border border-rose-400/25 bg-rose-400/[0.07] px-4 py-3.5 text-sm text-rose-100" role="alert" id="mfa-challenge-error">
+        <p class="font-semibold">We couldn't verify that code</p>
+        <p class="mt-1 leading-6 text-rose-200/80">Check the code and try again. Authenticator codes expire, and recovery codes can only be used once.</p>
+      </div>
+    <% end %>
+
+    <%= turbo_frame_tag "mfa_verification" do %>
+      <div class="mt-7">
+        <p class="text-sm font-semibold text-slate-200" id="mfa-method-label">Choose verification method</p>
+        <div class="mt-3 grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-slate-950/60 p-1.5" role="group" aria-labelledby="mfa-method-label">
+          <%= link_to new_mfa_challenge_path(method: "authenticator"),
+              data: { turbo_action: "advance", mfa_method: "authenticator" },
+              aria: { current: (!recovery_mode ? "page" : nil) },
+              class: "flex min-h-12 min-w-0 cursor-pointer items-center justify-center gap-2 rounded-xl px-2 py-2.5 text-center text-xs font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-300 sm:text-sm #{!recovery_mode ? 'bg-indigo-500/20 text-indigo-100 ring-1 ring-inset ring-indigo-400/40' : 'text-slate-400 hover:bg-white/5 hover:text-white'}" do %>
+            <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M10 17.5h4M10 5.5h4" stroke-linecap="round"/></svg>
+            <span>Authenticator</span>
+          <% end %>
+          <%= link_to new_mfa_challenge_path(method: "recovery"),
+              data: { turbo_action: "advance", mfa_method: "recovery" },
+              aria: { current: (recovery_mode ? "page" : nil) },
+              class: "flex min-h-12 min-w-0 cursor-pointer items-center justify-center gap-2 rounded-xl px-2 py-2.5 text-center text-xs font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-300 sm:text-sm #{recovery_mode ? 'bg-indigo-500/20 text-indigo-100 ring-1 ring-inset ring-indigo-400/40' : 'text-slate-400 hover:bg-white/5 hover:text-white'}" do %>
+            <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="8" cy="15" r="3"/><path d="m10.2 12.8 8.3-8.3 2 2-2 2 1.5 1.5-2 2-1.5-1.5-3.6 3.6" stroke-linejoin="round"/></svg>
+            <span>Recovery code</span>
+          <% end %>
+        </div>
+
+        <div class="mt-5 rounded-2xl border border-white/10 bg-slate-950/40 p-4 sm:p-5" data-mfa-active-method="<%= @code_method %>">
+          <div class="flex items-start gap-3">
+            <span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl <%= recovery_mode ? 'bg-amber-400/10 text-amber-300' : 'bg-indigo-400/10 text-indigo-300' %>" aria-hidden="true"><%= recovery_mode ? "↺" : "◎" %></span>
+            <div>
+              <h2 class="text-sm font-semibold text-slate-100"><%= recovery_mode ? "Use a saved recovery code" : "Use your authenticator app" %></h2>
+              <p class="mt-1 text-xs leading-5 text-slate-400"><%= recovery_mode ? "If you cannot access your authenticator, enter one of the backup codes you saved when enabling MFA." : "Open your authenticator app and enter the current six-digit code. A new code is generated every 30 seconds." %></p>
+            </div>
+          </div>
+
+          <%= form_with url: mfa_challenge_path, class: "mt-5", data: { turbo_frame: "_top" } do |f| %>
+            <%= f.hidden_field :code_method, value: @code_method %>
+            <%= f.label :token, recovery_mode ? "Recovery code" : "6-digit authentication code", class: "block text-sm font-medium text-slate-200" %>
+            <%= f.text_field :token,
+                required: true,
+                autofocus: true,
+                autocomplete: (recovery_mode ? "off" : "one-time-code"),
+                inputmode: (recovery_mode ? "text" : "numeric"),
+                maxlength: (recovery_mode ? 19 : 6),
+                placeholder: (recovery_mode ? "XXXX-XXXX-XXXX-XXXX" : "000000"),
+                spellcheck: false,
+                autocapitalize: "off",
+                aria: { describedby: "mfa-code-hint#{' mfa-challenge-error' if alert == 'Invalid authentication code.'}", invalid: (alert == "Invalid authentication code.") },
+                class: "mt-2 block min-h-12 w-full min-w-0 rounded-xl border #{alert == 'Invalid authentication code.' ? 'border-rose-400/40' : 'border-white/15'} bg-slate-950 px-4 py-3 font-mono text-base tracking-[0.12em] text-white placeholder:text-slate-600 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-400/20 sm:text-lg" %>
+            <p id="mfa-code-hint" class="mt-2 text-xs leading-5 text-slate-400"><%= recovery_mode ? "Recovery codes are 16 letters/numbers, usually grouped in fours with hyphens. Each code works once." : "Enter all six digits, including any leading zeros. Never share this code with anyone." %></p>
+            <%= f.submit "Verify", class: "mt-5 inline-flex min-h-12 w-full cursor-pointer items-center justify-center rounded-xl bg-indigo-500 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-950/20 transition hover:bg-indigo-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-300" %>
+          <% end %>
+        </div>
+
+        <p class="mt-5 text-center text-xs leading-5 text-slate-400">
+          <%= recovery_mode ? "Have your authenticator again?" : "Can't access your authenticator?" %>
+          <%= link_to(recovery_mode ? "Use authenticator" : "Use a recovery code",
+              new_mfa_challenge_path(method: (recovery_mode ? "authenticator" : "recovery")),
+              data: { turbo_action: "advance" },
+              class: "ml-1 font-semibold text-indigo-300 underline decoration-indigo-400/40 underline-offset-4 hover:text-indigo-200") %>
+        </p>
+      </div>
+    <% end %>
+
+    <p class="mt-6 text-center text-xs text-slate-500"><%= link_to "Back to sign in", new_session_path, class: "underline decoration-white/20 underline-offset-4 hover:text-slate-200" %></p>
+  </section>
+
+  <aside class="min-w-0 border-t border-white/10 bg-slate-950/55 p-6 sm:p-9 lg:border-l lg:border-t-0 lg:p-10" aria-labelledby="mfa-help-title">
+    <div class="flex h-full flex-col">
+      <p class="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-300">Sign-in help</p>
+      <h2 id="mfa-help-title" class="mt-3 text-lg font-semibold text-slate-100">A safer way into your vault</h2>
+      <p class="mt-2 text-sm leading-6 text-slate-400">One more step helps protect your encrypted items if somebody learns your password.</p>
+
+      <div class="mt-7 space-y-5">
+        <div class="flex gap-3">
+          <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-white/10 bg-white/[0.04] text-sm font-semibold text-indigo-300" aria-hidden="true">1</span>
+          <div>
+            <h3 class="text-sm font-semibold text-slate-200">Authenticator code</h3>
+            <p class="mt-1 text-xs leading-5 text-slate-400">The current six-digit code from the app you linked to your account.</p>
+          </div>
+        </div>
+        <div class="flex gap-3">
+          <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-white/10 bg-white/[0.04] text-sm font-semibold text-amber-300" aria-hidden="true">2</span>
+          <div>
+            <h3 class="text-sm font-semibold text-slate-200">Recovery code</h3>
+            <p class="mt-1 text-xs leading-5 text-slate-400">Use one saved backup code if the authenticator is unavailable. You won't need both.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-8 rounded-2xl border border-amber-400/20 bg-amber-400/[0.06] p-4">
+        <div class="flex items-center gap-2 text-sm font-semibold text-amber-200"><span aria-hidden="true">✦</span> Keep recovery codes private</div>
+        <p class="mt-2 text-xs leading-5 text-amber-100/70">A recovery code becomes invalid after a successful use. Store unused codes somewhere safe, separate from your password.</p>
+      </div>
+      <p class="mt-auto pt-7 text-xs leading-5 text-slate-500">This page never displays saved codes or asks you to reveal them to support staff.</p>
+    </div>
+  </aside>
 </div>
