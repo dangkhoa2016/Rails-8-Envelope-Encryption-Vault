@@ -98,8 +98,6 @@ The pinned runtime is [Ruby 3.4.11](.ruby-version); CI also exercises Ruby 4.0 c
 | --- | --- |
 | Seven item templates | Login, API key, environment variables, database, secure note, server/SSH, custom secret |
 | Vault management | Create, edit, list, search, filter by category/tag/state, favorite and archive items |
-
-The Vault displays **Active** items by default. Archive hides an item from daily results but retains encrypted data and version history. Select **Archived** or **All states** to find it, then **Unarchive** to return it to Active. Archiving does not revoke external credentials.
 | Encrypted versions | Every update creates a new encrypted version; restore creates a new version instead of changing history in place |
 | Controlled access | Authorized reveal/export, reauthentication for sensitive actions, per-user ownership checks |
 | Account protection | TOTP MFA, hashed recovery codes, session expiry/revocation and rate-limiting controls |
@@ -107,15 +105,20 @@ The Vault displays **Active** items by default. Archive hides an item from daily
 | KEK operations | Generate/verify KEKs, read-only older keys, DEK rewrapping and provider diagnostics |
 | Recovery operations | age-encrypted PostgreSQL dumps, SHA-256 checks, guarded restore and canary-decrypt DR rehearsal |
 
+The Vault displays **Active** items by default. Archive hides an item from daily results but retains encrypted data and version history. Select **Archived** or **All states** to find it, then **Unarchive** to return it to Active. Archiving does not revoke external credentials.
+
 This is **not** a shared team secret manager with a published high-availability service-level guarantee; evaluate its existing access model and operational assumptions before extending it.
+
+For encrypted-search accuracy, limits and a reproducible synthetic benchmark, see [Vault Search performance](docs/VAULT-SEARCH-PERFORMANCE.md). For publication readiness and remaining security checks, see [Public-release security review](docs/PUBLIC-RELEASE-SECURITY-REVIEW.md).
 
 ## Security Activity Center
 
-The upcoming **Security Activity Center** improves Audit Log with account-linked security metrics, 7/30/90-day or all-time filtering, explicit Completed/Failed/Recorded outcomes, responsive timelines and safe event details. Only events attributed to your authenticated account are displayed. Anonymous sign-in failures and system-wide key rotations are **not** represented in personal metrics.
+The **Security Activity Center** improves Audit Log with account-linked security metrics, 7/30/90-day or all-time filtering, explicit Completed/Failed/Recorded outcomes, responsive timelines and safe event details. Only events attributed to your authenticated account are displayed. Anonymous sign-in failures and system-wide key rotations are **not** represented in personal metrics.
 
 The Security Activity Center is included in the `v1.0.0` community source release. The account timeline is not an operator-wide intrusion monitoring feed or a cryptographically tamper-evident system log. Read the [bilingual Audit security specification](docs/AUDIT-ACTIVITY.md) for scope, safeguards and limitations. Production acceptance and manual mobile accessibility checks remain separate.
 
-The Activity Center also displays bounded authentication request evidence (resolved IP address, User-Agent/browser/OS and safe HTTP method/path) and owner-checked links to existing Vault items; archived items remain accessible, removed or unauthorized items never receive links. Historical events are not backfilled.\n\n
+The Activity Center also displays bounded authentication request evidence (resolved IP address, User-Agent/browser/OS and safe HTTP method/path) and owner-checked links to existing Vault items; archived items remain accessible, removed or unauthorized items never receive links. Historical events are not backfilled.
+
 ## System architecture
 
 ```mermaid
@@ -307,7 +310,7 @@ The publication review of the initial source release reported **6/6 CI jobs pass
 | Unit, request and browser/system tests | Rails behavior, access/security workflows and UI regressions | [CI workflow](.github/workflows/ci.yml) · `bin/rails test` · `bin/rails test:system` |
 | Cryptography and security self-tests | Envelope operations and security invariants | `script/crypto-self-test` · `script/security-self-test` |
 | Static quality and dependencies | RuboCop, Brakeman, bundler-audit, repository policy | [CI workflow](.github/workflows/ci.yml) |
-| Runtime compatibility | Ruby 3.4 and Ruby 4.0 with PostgreSQL 17 in CI | [CI run](https://github.com/dangkhoa201/Rails-8-Envelope-Encryption-Vault/actions/runs/39538635309) |
+| Runtime compatibility | Ruby 3.4 and Ruby 4.0 with PostgreSQL 17 in CI | [CI run](https://github.com/dangkhoa2016/Rails-8-Envelope-Encryption-Vault/actions/runs/40081866248) |
 | Docker packaging | No-cache cold image build | [CI workflow](.github/workflows/ci.yml) |
 | Bilingual documentation | Language-pair checks, badges and relative links | [Docs workflow](.github/workflows/docs.yml) · `python3 script/doc-quality-check` |
 

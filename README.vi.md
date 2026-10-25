@@ -98,8 +98,6 @@ Runtime chính được ghim tại [Ruby 3.4.11](.ruby-version); CI còn kiểm 
 | --- | --- |
 | Bảy mẫu bí mật | Login, API key, environment, database, secure note, server/SSH, custom secret |
 | Quản lý vault | Tạo, sửa, liệt kê, tìm kiếm, lọc theo loại/tag/trạng thái, đánh dấu yêu thích, lưu trữ |
-
-Danh sách Vault mặc định hiển thị **Active**. Archive chỉ ẩn item khỏi danh sách này, không xóa bản mã hoặc lịch sử phiên bản. Chọn **Archived** hoặc **All states** để tìm lại, rồi **Unarchive** để khôi phục Active. Archive không thu hồi thông tin xác thực ở hệ thống bên ngoài.
 | Phiên bản mã hóa | Mỗi lần cập nhật tạo phiên bản mã hóa mới; khôi phục tạo một phiên bản mới thay vì sửa lịch sử |
 | Quyền truy cập | Reveal/export có kiểm tra quyền, xác thực lại với hành động nhạy cảm, cách ly dữ liệu theo chủ sở hữu |
 | Bảo vệ tài khoản | TOTP MFA, recovery code được băm, hết hạn/thu hồi session và giới hạn tần suất |
@@ -107,7 +105,11 @@ Danh sách Vault mặc định hiển thị **Active**. Archive chỉ ẩn item 
 | Vận hành KEK | Tạo/xác minh KEK, khóa cũ chỉ phục vụ giải mã, bọc lại DEK, chẩn đoán provider |
 | Phục hồi | Dump PostgreSQL được mã hóa bằng age, kiểm tra SHA-256, restore có kiểm soát, diễn tập giải mã canary |
 
+Danh sách Vault mặc định hiển thị **Active**. Archive chỉ ẩn item khỏi danh sách này, không xóa bản mã hoặc lịch sử phiên bản. Chọn **Archived** hoặc **All states** để tìm lại, rồi **Unarchive** để khôi phục Active. Archive không thu hồi thông tin xác thực ở hệ thống bên ngoài.
+
 Đây **không phải** một hệ thống quản lý bí mật dùng chung cho doanh nghiệp đã công bố cam kết SLA/HA. Cần đánh giá mô hình phân quyền và giả định vận hành trước khi mở rộng.
+
+Về độ chính xác tìm kiếm mã hóa, giới hạn và benchmark dữ liệu giả, xem [Hiệu năng Vault Search](docs/VAULT-SEARCH-PERFORMANCE.vi.md). Trước khi công bố, xem [Rà soát bảo mật trước khi mở Public](docs/PUBLIC-RELEASE-SECURITY-REVIEW.vi.md).
 
 ## Security Activity Center
 
@@ -115,7 +117,7 @@ Danh sách Vault mặc định hiển thị **Active**. Archive chỉ ẩn item 
 
 Security Activity Center thuộc **bản phát hành mã nguồn cộng đồng `v1.0.0`**. Timeline này không phải công cụ phát hiện xâm nhập toàn hệ thống hay log chống sửa đổi bằng mật mã. Đọc [tài liệu bảo mật Audit song ngữ](docs/AUDIT-ACTIVITY.vi.md) để hiểu phạm vi và các giới hạn. Nghiệm thu production và kiểm tra accessibility trên thiết bị di động vẫn là bước độc lập.
 
-Security Activity Center còn hiển thị thông tin request xác thực (IP, User-Agent/trình duyệt/hệ điều hành, method và đường dẫn an toàn) cùng link mở Vault item còn tồn tại theo quyền sở hữu; item đã archive vẫn mở được, item mất hoặc không có quyền sẽ không có link. Sự kiện cũ không được tự bổ sung dữ liệu.\n\n
+Security Activity Center còn hiển thị thông tin request xác thực (IP, User-Agent/trình duyệt/hệ điều hành, method và đường dẫn an toàn) cùng link mở Vault item còn tồn tại theo quyền sở hữu; item đã archive vẫn mở được, item mất hoặc không có quyền sẽ không có link. Sự kiện cũ không được tự bổ sung dữ liệu.
 ## Kiến trúc hệ thống
 
 ```mermaid
@@ -307,7 +309,7 @@ Lần nghiệm thu phát hành mã nguồn đầu tiên ghi nhận **6/6 job CI 
 | Unit/request/browser tests | Nghiệp vụ Rails, phân quyền/bảo mật và lỗi giao diện | [CI workflow](.github/workflows/ci.yml) · `bin/rails test` · `bin/rails test:system` |
 | Kiểm thử mã hóa và bảo mật | Envelope và các bất biến về bảo mật | `script/crypto-self-test` · `script/security-self-test` |
 | Chất lượng mã và dependency | RuboCop, Brakeman, bundler-audit, chính sách repository | [CI workflow](.github/workflows/ci.yml) |
-| Tương thích runtime | Ruby 3.4 và Ruby 4.0, PostgreSQL 17 trên CI | [CI run](https://github.com/dangkhoa201/Rails-8-Envelope-Encryption-Vault/actions/runs/39538635309) |
+| Tương thích runtime | Ruby 3.4 và Ruby 4.0, PostgreSQL 17 trên CI | [CI run](https://github.com/dangkhoa2016/Rails-8-Envelope-Encryption-Vault/actions/runs/40081866248) |
 | Đóng gói Docker | Build image không dùng cache | [CI workflow](.github/workflows/ci.yml) |
 | Tài liệu song ngữ | Kiểm tra cặp ngôn ngữ, badge, liên kết nội bộ | [Docs workflow](.github/workflows/docs.yml) · `python3 script/doc-quality-check` |
 
