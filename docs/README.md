@@ -29,6 +29,7 @@ The top-level [README](../README.md) introduces the vault, envelope encryption a
 
 - [Notebook setup](KAGGLE-SETUP.md): ephemeral Kaggle/Colab bootstrap with synthetic data.
 - [Deployment guide](deployment.md): environment separation, preflight and explicit host acceptance.
+- [Modal dual deployment](MODAL-DEPLOYMENT.md): disposable public demo and isolated private PostgreSQL persistence.
 - [Production checklist](PRODUCTION-CHECKLIST.md): go-live safeguards and operator responsibilities.
 - [Backup and restore](BACKUP-RESTORE.md): age-encrypted dump, checksum, guarded restore and canary.
 - [Recovery provenance](RECOVERY-PROVENANCE.md): recovery evidence expectations.

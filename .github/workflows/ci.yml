@@ -26,6 +26,8 @@ jobs:
       - run: bundle exec rubocop
       - run: script/repository-policy
       - run: python3 script/doc-quality-check
+      - run: python3 -m py_compile ops/modal/app.py ops/modal/runtime.py ops/modal/tests/test_runtime.py
+      - run: python3 -m unittest discover -s ops/modal/tests -v
       - run: bash -n bootstrap.sh bin/bootstrap bin/ci bin/docker-entrypoint script/backup-db script/restore-db script/verify-backup script/dr-verify script/dr-rehearsal script/prove-no-plaintext script/project-doctor script/ops-check script/ops-report script/backup-retention script/ops-maintenance script/offsite-roundtrip script/offsite-dr-rehearsal script/kek-recovery-check script/production-acceptance script/scheduled-ops script/install-ops-scheduler script/ops-scheduler-doctor
 
   test:
