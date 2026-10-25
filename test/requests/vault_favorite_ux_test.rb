@@ -60,6 +60,81 @@ class VaultFavoriteUxTest < ActionDispatch::IntegrationTest
     assert_select '#vault_favorite_control button[aria-label="Add to favorites"]', 1
   end
 
+  test "listing favorite and unfavorite Turbo Streams replace only their star and toast" do
+    target = "listing_favorite_control_vault_item_#{@item.id}"
+    params = { source: "listing", page: "4", status: "active" }
+    headers = { "ACCEPT" => "text/vnd.turbo-stream.html" }
+
+    post favorite_vault_item_path(@item), params: params, headers: headers
+    assert_response :success
+    assert_equal "text/vnd.turbo-stream.html", response.media_type
+    assert_select "turbo-stream[action='replace'][target='#{target}']", 1
+    assert_select "##{target} button[aria-label='Remove from favorites']", 1
+    assert_select "##{target} input[name='page'][value='4']", 1
+    assert_select "turbo-stream[action='update'][target='toast_notifications'] [role='status']",
+      text: /Added to favorites\./
+    assert_select "turbo-stream[target='vault_listing']", 0
+    assert @item.reload.favorite?
+
+    post unfavorite_vault_item_path(@item), params: params, headers: headers
+    assert_response :success
+    assert_select "turbo-stream[action='replace'][target='#{target}']", 1
+    assert_select "##{target} button[aria-label='Add to favorites']", 1
+    assert_select "turbo-stream[action='update'][target='toast_notifications'] [role='status']",
+      text: /Removed from favorites\./
+    assert_not @item.reload.favorite?
+  end
+
+  test "listing HTML fallback preserves safe page and session-scoped search filter" do
+    post search_vault_items_path, params: {
+      q: "Private favorite", kind: "login", status: "active", tag: "test"
+    }
+    assert_response :see_other
+    filter = Rack::Utils.parse_nested_query(URI.parse(response.location).query).fetch("filter")
+
+    post favorite_vault_item_path(@item),
+      params: { source: "listing", page: "4", filter:, status: "active" }
+    assert_response :see_other
+    destination = URI.parse(response.location)
+    assert_equal "/vault_items", destination.path
+    assert_equal "4", Rack::Utils.parse_nested_query(destination.query)["page"]
+    assert_equal filter, Rack::Utils.parse_nested_query(destination.query)["filter"]
+    refute_includes response.location, "Private"
+    refute_includes response.location, "test"
+    assert @item.reload.favorite?
+
+    post unfavorite_vault_item_path(@item),
+      params: { source: "listing", page: "4", filter:, status: "active" }
+    assert_response :see_other
+    assert_equal filter, Rack::Utils.parse_nested_query(URI.parse(response.location).query)["filter"]
+    assert_not @item.reload.favorite?
+  end
+
+  test "unfavorite in Favorites-only filter streams refreshed listing without full navigation" do
+    @item.update!(favorite: true)
+    post search_vault_items_path, params: { favorite: "1", status: "active" }
+    assert_response :see_other
+    filter = Rack::Utils.parse_nested_query(URI.parse(response.location).query).fetch("filter")
+
+    post unfavorite_vault_item_path(@item),
+      params: { source: "listing", filter:, page: "1", status: "active" },
+      headers: { "ACCEPT" => "text/vnd.turbo-stream.html" }
+
+    assert_response :success
+    assert_select "turbo-stream[action='replace'][target='vault_listing']", 1
+    assert_select "turbo-stream[action='update'][target='toast_notifications'] [role='status']", 1
+    assert_select "turbo-stream[target='listing_favorite_control_vault_item_#{@item.id}']", 0
+    assert_not @item.reload.favorite?
+  end
+
+  test "listing fallback does not honor external or malformed navigation parameters" do
+    post favorite_vault_item_path(@item),
+      params: { source: "listing", page: "javascript:alert(1)", filter: "unknown", status: "unsafe",
+                return_to: "https://other.example/steal" }
+    assert_response :see_other
+    assert_redirected_to vault_items_path(page: 1, sort: "favorite", direction: "desc")
+  end
+
   test "favorites submitted from the listing retain list navigation" do
     post favorite_vault_item_path(@item)
     assert_response :see_other

@@ -1,0 +1,18 @@
+<div id="<%= dom_id(item, :listing_favorite_control) %>"
+     data-controller="favorite-control"
+     data-action="turbo:submit-start->favorite-control#disable turbo:submit-end->favorite-control#enable"
+     data-favorite-control-updated-value="<%= local_assigns[:updated] == true %>">
+  <% listing_params = { source: "listing", page: page, filter: filter, status: status,
+    sort: sort, direction: direction }.compact %>
+  <% if item.favorite? %>
+    <%= button_to "★", unfavorite_vault_item_path(item), method: :post,
+      params: listing_params, title: "Remove from favorites",
+      aria: { label: "Remove from favorites" },
+      class: "disabled:cursor-wait disabled:opacity-50 grid h-9 w-9 place-items-center rounded-xl border border-amber-400/20 bg-amber-400/10 text-lg text-amber-300 hover:bg-amber-400/15" %>
+  <% else %>
+    <%= button_to "☆", favorite_vault_item_path(item), method: :post,
+      params: listing_params, title: "Add to favorites",
+      aria: { label: "Add to favorites" },
+      class: "disabled:cursor-wait disabled:opacity-50 grid h-9 w-9 place-items-center rounded-xl border border-white/10 text-lg text-slate-500 hover:bg-white/5 hover:text-amber-300" %>
+  <% end %>
+</div>

@@ -151,6 +151,61 @@ class VaultListItemsTest < ActiveSupport::TestCase
     assert_equal %w[production billing], result.tags_by_item_id.fetch(favorite.id)
   end
 
+  test "sortable metadata columns order across page boundaries without decrypting extra records" do
+    a = create_item("Zed record", kind: "login")
+    b = create_item("Alpha record", kind: "environment")
+    c = create_item("Beta record", kind: "login")
+    a.update_columns(favorite: true, updated_at: Time.current - 1.hour)
+    b.update_columns(favorite: false, updated_at: Time.current - 2.hours)
+    c.update_columns(favorite: false, updated_at: Time.current - 3.hours)
+
+    favorite_default = Vault::ListItems.call(user: @user)
+    assert_equal [ a.id, b.id, c.id ], favorite_default.summaries.map { |item, _| item.id }
+
+    recent = Vault::ListItems.call(user: @user, sort: "updated", direction: "desc", per_page: 1, page: 2)
+    assert_equal [ b.id ], recent.summaries.map { |item, _| item.id }
+    oldest = Vault::ListItems.call(user: @user, sort: "updated", direction: "asc")
+    assert_equal [ c.id, b.id, a.id ], oldest.summaries.map { |item, _| item.id }
+
+    type_asc = Vault::ListItems.call(user: @user, sort: "kind", direction: "asc")
+    assert_equal [ b.id, a.id, c.id ], type_asc.summaries.map { |item, _| item.id }
+    favorite_asc = Vault::ListItems.call(user: @user, sort: "favorite", direction: "asc")
+    assert_equal [ b.id, c.id, a.id ], favorite_asc.summaries.map { |item, _| item.id }
+  end
+
+  test "Item sort decrypts titles before paging but retains secrecy of stored titles" do
+    create_item("Zulu secret")
+    create_item("alpha secret")
+    create_item("Bravo secret")
+
+    first = Vault::ListItems.call(user: @user, sort: "item", direction: "asc", per_page: 2)
+    second = Vault::ListItems.call(user: @user, sort: "item", direction: "asc", per_page: 2, page: 2)
+    reversed = Vault::ListItems.call(user: @user, sort: "item", direction: "desc")
+
+    assert_equal [ "alpha secret", "Bravo secret" ], first.summaries.map(&:last)
+    assert_equal [ "Zulu secret" ], second.summaries.map(&:last)
+    assert_equal [ "Zulu secret", "Bravo secret", "alpha secret" ], reversed.summaries.map(&:last)
+    refute_includes @user.vault_items.first.attributes.values.map(&:to_s), "alpha secret"
+  end
+
+  test "sort whitelisting avoids unsafe SQL and defaults to favorite descending" do
+    a = create_item("One")
+    b = create_item("Two")
+    a.update_columns(favorite: true)
+    hostile = Vault::ListItems.call(user: @user, sort: "created_at DESC; DROP TABLE users", direction: "garbage")
+    assert_equal [ a.id, b.id ], hostile.summaries.map { |item, _| item.id }
+  end
+
+  test "search filters and title sorting paginate across all matching encrypted titles" do
+    8.times { |index| create_item("Private record #{index}") }
+    create_item("Other label")
+    first = Vault::ListItems.call(user: @user, q: "Private", sort: "item", direction: "asc", per_page: 3)
+    second = Vault::ListItems.call(user: @user, q: "Private", sort: "item", direction: "asc", per_page: 3, page: 2)
+    assert_equal 8, first.total
+    assert_equal [ "Private record 0", "Private record 1", "Private record 2" ], first.summaries.map(&:last)
+    assert_equal [ "Private record 3", "Private record 4", "Private record 5" ], second.summaries.map(&:last)
+  end
+
   private
 
   def create_item(title, kind: "login", tags: [])

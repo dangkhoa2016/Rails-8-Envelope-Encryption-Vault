@@ -62,13 +62,38 @@
       <%= link_to "Clear filters", vault_items_path, class: "mt-4 inline-flex rounded-xl border border-white/10 px-4 py-2.5 text-sm" %>
     </div>
   <% else %>
+    <p class="mt-5 text-xs text-slate-400" role="status" data-vault-sort-status>
+      Sorted by <strong class="font-semibold text-indigo-200"><%= { "item" => "Item", "kind" => "Type", "updated" => "Updated", "favorite" => "Favorite" }.fetch(@sort) %> <%= @direction == "asc" ? "↑ Ascending" : "↓ Descending" %></strong>
+      <span class="text-slate-500">· Click a column header to change order.</span>
+    </p>
+    <div class="mt-2 flex flex-wrap gap-2 md:hidden" aria-label="Sort Vault items">
+      <% [["Item", "item"], ["Type", "kind"], ["Updated", "updated"], ["Favorite", "favorite"]].each do |label, key| %>
+        <% active = @sort == key %>
+        <% next_direction = active ? (@direction == "asc" ? "desc" : "asc") : (%w[updated favorite].include?(key) ? "desc" : "asc") %>
+        <%= link_to "#{label} #{active ? (@direction == 'asc' ? '↑' : '↓') : '↕'}",
+          vault_items_path(**@sort_base_params.merge(sort: key, direction: next_direction, page: 1)),
+          aria: { label: "Sort by #{label} #{next_direction == 'asc' ? 'ascending' : 'descending'}" },
+          class: "rounded-lg border px-3 py-1.5 text-xs #{active ? 'border-indigo-400/50 bg-indigo-400/15 text-indigo-200' : 'border-white/10 text-slate-400'}" %>
+      <% end %>
+    </div>
     <div class="mt-6 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
-      <div class="hidden grid-cols-[minmax(0,1fr)_150px_140px_52px] gap-4 border-b border-white/10 px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-600 md:grid">
-        <span>Item</span><span>Type</span><span>Updated</span><span class="sr-only">Favorite</span>
+      <div role="row" class="hidden grid-cols-[minmax(0,1fr)_150px_140px_112px] gap-4 border-b border-white/10 px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 md:grid">
+        <% [["Item", "item"], ["Type", "kind"], ["Updated", "updated"], ["Favorite", "favorite"]].each do |label, key| %>
+          <% active = @sort == key %>
+          <% next_direction = active ? (@direction == "asc" ? "desc" : "asc") : (%w[updated favorite].include?(key) ? "desc" : "asc") %>
+          <span role="columnheader" aria-sort="<%= active ? (@direction == "asc" ? "ascending" : "descending") : "none" %>" class="<%= 'flex justify-end' if key == 'favorite' %>">
+            <%= link_to vault_items_path(**@sort_base_params.merge(sort: key, direction: next_direction, page: 1)),
+                title: "Sort by #{label} (#{next_direction == 'asc' ? 'ascending' : 'descending'})",
+                class: "inline-flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded px-1 py-1 transition hover:text-indigo-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-300 #{active ? 'font-bold text-indigo-200' : ''}" do %>
+              <span><%= label %></span>
+              <span aria-hidden="true" class="text-sm"><%= active ? (@direction == "asc" ? "↑" : "↓") : "↕" %></span>
+            <% end %>
+          </span>
+        <% end %>
       </div>
       <div class="divide-y divide-white/5">
         <% @summaries.each do |item, title| %>
-          <div class="grid gap-3 px-5 py-4 transition hover:bg-white/[0.035] md:grid-cols-[minmax(0,1fr)_150px_140px_52px] md:items-center">
+          <div class="grid gap-3 px-5 py-4 transition hover:bg-white/[0.035] md:grid-cols-[minmax(0,1fr)_150px_140px_112px] md:items-center">
             <%= link_to vault_item_path(item), class: "flex min-w-0 items-center gap-3" do %>
               <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.035] text-slate-300"><%= vault_kind_icon(item.kind) %></span>
               <span class="min-w-0">
@@ -82,11 +107,8 @@
             <span><span class="<%= vault_kind_badge_classes(item.kind) %>"><%= vault_kind_label(item.kind) %></span></span>
             <span class="text-xs text-slate-500"><%= time_ago_in_words(item.updated_at) %> ago</span>
             <span class="flex justify-end">
-              <% if item.favorite? %>
-                <%= button_to "★", unfavorite_vault_item_path(item), method: :post, title: "Remove from favorites", aria: { label: "Remove from favorites" }, class: "grid h-9 w-9 place-items-center rounded-xl border border-amber-400/20 bg-amber-400/10 text-lg text-amber-300 hover:bg-amber-400/15" %>
-              <% else %>
-                <%= button_to "☆", favorite_vault_item_path(item), method: :post, title: "Add to favorites", aria: { label: "Add to favorites" }, class: "grid h-9 w-9 place-items-center rounded-xl border border-white/10 text-lg text-slate-500 hover:bg-white/5 hover:text-amber-300" %>
-              <% end %>
+              <%= render "listing_favorite_control", item: item, page: @page,
+                filter: @filter_token, status: @status_filter, sort: @sort, direction: @direction %>
             </span>
           </div>
         <% end %>
