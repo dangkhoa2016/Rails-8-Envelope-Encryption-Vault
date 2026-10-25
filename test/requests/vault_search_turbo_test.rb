@@ -157,7 +157,7 @@ class VaultSearchTurboTest < ActionDispatch::IntegrationTest
     get first_url
     assert_response :success
     assert_select 'input[type="search"][value="Private sample title"]'
-    assert_select 'select#tag option[selected][value="demo"]'
+    assert_select 'input#tag[value="demo"]'
     get second_url
     assert_response :success
     assert_select 'input[type="search"][value="nonexistent title"]'

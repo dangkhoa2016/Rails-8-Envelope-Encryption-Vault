@@ -199,7 +199,7 @@ class VaultCategoryGuidanceTest < ApplicationSystemTestCase
     visit vault_items_path
     assert_select "Filter by type", selected: "All types"
     assert_select "Filter by state", selected: "Active"
-    assert_select "Filter by tag", selected: "All tags"
+    assert_selector "input#tag[placeholder='Any tag (exact match)']"
 
     select "Login", from: "Filter by type"
     assert_select "Filter by type", selected: "Login"
