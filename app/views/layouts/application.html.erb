@@ -10,7 +10,7 @@
     <%= stylesheet_link_tag "tailwind", "data-turbo-track": "reload" %>
     <%= javascript_importmap_tags %>
   </head>
-  <body class="min-h-screen bg-slate-950 text-slate-100 antialiased selection:bg-indigo-400/30">
+  <body class="min-h-screen bg-slate-950 text-slate-100 antialiased selection:bg-indigo-400/30" data-controller="scroll-experience">
     <% if ActiveModel::Type::Boolean.new.cast(ENV.fetch("DEMO_MODE", "false")) %>
       <div class="border-b border-amber-300/20 bg-amber-300/10 px-4 py-2 text-center text-xs font-semibold tracking-wide text-amber-100" role="status" data-demo-banner>Demo environment — synthetic data only. Do not enter real secrets.</div>
     <% end %>
@@ -98,5 +98,15 @@
         </div>
       </main>
     <% end %>
+    <button type="button" hidden
+            data-scroll-experience-target="topButton"
+            data-action="click->scroll-experience#toTop"
+            aria-label="Back to top" title="Back to top"
+            class="fixed bottom-24 right-5 z-[70] grid h-12 w-12 place-items-center rounded-2xl border border-indigo-300/30 bg-indigo-500/90 text-white shadow-lg shadow-black/40 backdrop-blur-sm transition hover:-translate-y-0.5 hover:bg-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-300 sm:bottom-28 sm:right-7">
+      <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m6 12 6-6 6 6M12 6v13"/>
+      </svg>
+    </button>
   </body>
 </html>

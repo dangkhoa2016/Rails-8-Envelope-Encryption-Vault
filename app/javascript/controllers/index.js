@@ -16,3 +16,6 @@ application.register("flash", FlashController)
 application.register("vault-search", VaultSearchController)
 application.register("audit-filters", AuditFiltersController)
 application.register("favorite-control", FavoriteControlController)
+
+import ScrollExperienceController from "controllers/scroll_experience_controller"
+application.register("scroll-experience", ScrollExperienceController)
