@@ -1,0 +1,33 @@
+FAVICON ASSET ATTRIBUTION AND LICENSING
+
+## Source and author
+
+- Icon name: **Safe Box** (resource ID **5861990**)
+- Designer / credited author: **magnific** (Magnific)
+- Icon source: https://www.magnific.com/icon/safe-box_5861990
+- Author profile: https://www.magnific.com/author/magnific
+- Platform license information: https://www.magnific.com/ai/docs/licenses-attribution
+- Files in this project: `public/favicon.png` and `public/favicon.ico` (two browser-ready representations of the same design).
+
+## Attribution
+
+**Designed by Magnific** — https://www.magnific.com
+
+The credit also appears in the website footer and the English/Vietnamese project READMEs. Attribution is required for free-license use and is not equivalent to an unrestricted open-source grant.
+
+## Third-party license boundary
+
+Copyright of the icon remains with its original rights holder(s). The project's MIT License covers the project source code **but does not license the third-party favicon artwork**. Use of this icon is subject to the license granted by Magnific to the asset downloader and the applicable terms of use. Do not treat this attribution notice as a new license or as permission to resell, sublicense, redistribute the standalone files, or register the icon as a trademark.
+
+A user reusing or distributing this software with the icon must independently verify the scope of their license, including any restrictions on redistribution of original or modified stock resources. If unable to comply, replace `favicon.png` and `favicon.ico` with assets for which appropriate distribution rights have been obtained.
+
+This file is a provenance, attribution and license-boundary notice; it does not reproduce the platform's legal terms or replace the license document provided at download.
+
+--------------------------------------------------------------------------
+TÓM TẮT TIẾNG VIỆT
+
+Tác giả được ghi công: magnific (Magnific).
+Nguồn icon: https://www.magnific.com/icon/safe-box_5861990
+Hồ sơ tác giả: https://www.magnific.com/author/magnific
+
+Biểu tượng Safe Box là tài sản bản quyền bên thứ ba và KHÔNG thuộc giấy phép MIT của mã nguồn dự án. Sử dụng icon theo điều khoản cấp phép gốc của Magnific; người dùng giấy phép miễn phí phải ghi công hiển thị rõ trên website. Việc ghi công không thay thế tài liệu license cấp bởi nền tảng và không trao quyền tái phân phối, bán hoặc đăng ký nhãn hiệu.
