@@ -1,13 +1,14 @@
 <div id="vault_favorite_control"
      data-controller="favorite-control"
+     data-action="turbo:submit-start->favorite-control#disable turbo:submit-end->favorite-control#enable"
      data-favorite-control-updated-value="<%= local_assigns[:updated] == true %>">
   <% if item.favorite? %>
     <%= button_to "★ Favorite", unfavorite_vault_item_path(item), method: :post, params: { source: "detail" },
       title: "Remove from favorites", aria: { label: "Remove from favorites" },
-      class: "rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-2.5 text-sm font-medium text-amber-200 hover:bg-amber-400/15" %>
+      class: "disabled:cursor-wait disabled:opacity-50 rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-2.5 text-sm font-medium text-amber-200 hover:bg-amber-400/15" %>
   <% else %>
     <%= button_to "☆ Add favorite", favorite_vault_item_path(item), method: :post, params: { source: "detail" },
       title: "Add to favorites", aria: { label: "Add to favorites" },
-      class: "rounded-xl border border-white/10 px-4 py-2.5 text-sm font-medium text-slate-300 hover:bg-white/5" %>
+      class: "disabled:cursor-wait disabled:opacity-50 rounded-xl border border-white/10 px-4 py-2.5 text-sm font-medium text-slate-300 hover:bg-white/5" %>
   <% end %>
 </div>

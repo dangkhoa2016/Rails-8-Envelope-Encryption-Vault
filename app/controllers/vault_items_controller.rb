@@ -14,7 +14,7 @@ class VaultItemsController < ApplicationController
       filters = snapshots[token] if FILTER_TOKEN_PATTERN.match?(token)
       @filter_token = token if filters
       filters ||= {}
-    elsif params[:page].present?
+    elsif params[:page].present? && params[:sort].blank?
       # Backward compatibility for older page-only links, without storing a
       # duplicate copy of large plaintext search strings in the session cookie.
       latest = session[:vault_current_filter_token]
@@ -124,6 +124,9 @@ class VaultItemsController < ApplicationController
     AuditEvent.create!(user: Current.user, vault_item: @item, action: action, metadata: {})
 
     detail = params[:source] == "detail"
+    listing = params[:source] == "listing"
+    context = listing_context if listing
+
     respond_to do |format|
       format.turbo_stream do
         if detail
@@ -139,14 +142,69 @@ class VaultItemsController < ApplicationController
               locals: { message: notice, kind: :notice }
             )
           ]
+        elsif listing
+          if context[:filters]["favorite"] == "1" && !favorite
+            # The item no longer matches the Favorites-only filter. Refresh the
+            # listing fragment (not the document), preserving the opaque filter
+            # and requested page unless the final page becomes empty.
+            @filter_token = context[:token]
+            load_index(context[:filters], requested_page: context[:page],
+              requested_sort: context[:sort], requested_direction: context[:direction])
+            @async_search = @page != context[:page]
+            updated_listing = turbo_stream.replace("vault_listing", partial: "vault_items/listing")
+          else
+            updated_listing = turbo_stream.replace(
+              helpers.dom_id(@item, :listing_favorite_control),
+              partial: "vault_items/listing_favorite_control",
+              locals: { item: @item, page: context[:page], filter: context[:token],
+                        status: context[:status], sort: context[:sort],
+                        direction: context[:direction], updated: true }
+            )
+          end
+          render turbo_stream: [
+            updated_listing,
+            turbo_stream.update(
+              "toast_notifications",
+              partial: "shared/toast",
+              locals: { message: notice, kind: :notice }
+            )
+          ]
         else
           redirect_to vault_items_path, status: :see_other, notice: notice
         end
       end
       format.html do
-        redirect_to(detail ? vault_item_path(@item) : vault_items_path, status: :see_other, notice: notice)
+        destination = if detail
+          vault_item_path(@item)
+        elsif listing
+          safe_listing_path(context)
+        else
+          vault_items_path
+        end
+        redirect_to destination, status: :see_other, notice: notice
       end
     end
+  end
+
+  def listing_context
+    # Never trust a user-supplied redirect URL or reveal private search terms.
+    raw_page = params[:page].to_s
+    page = raw_page.match?(/\A[1-9][0-9]{0,5}\z/) ? raw_page.to_i : 1
+    snapshots = session[:vault_filter_snapshots] || {}
+    token = params[:filter].to_s
+    token = nil unless FILTER_TOKEN_PATTERN.match?(token) && snapshots.key?(token)
+    status = params[:status].to_s.presence_in(%w[active archived all]) || "active"
+    filters = token ? snapshots.fetch(token) : { "status" => status }
+    sort = params[:sort].to_s.presence_in(Vault::ListItems::SORT_KEYS) || Vault::ListItems::DEFAULT_SORT
+    direction = params[:direction].to_s.presence_in(Vault::ListItems::SORT_DIRECTIONS) || Vault::ListItems::DEFAULT_DIRECTION
+    { page: page, token: token, status: status, filters: filters, sort: sort, direction: direction }
+  end
+
+  def safe_listing_path(context)
+    query = { page: context[:page], sort: context[:sort], direction: context[:direction] }
+    query[:filter] = context[:token] if context[:token]
+    query[:status] = context[:status] if context[:status] != "active" && !context[:token]
+    vault_items_path(**query)
   end
 
   def listing_query_params(filters, token)
@@ -161,8 +219,16 @@ class VaultItemsController < ApplicationController
     end
   end
 
-  def load_index(filters)
+  def load_index(filters, requested_page: params[:page], requested_sort: params[:sort],
+                 requested_direction: params[:direction])
+    @sort = requested_sort.to_s.presence_in(Vault::ListItems::SORT_KEYS) || Vault::ListItems::DEFAULT_SORT
+    @direction = requested_direction.to_s.presence_in(Vault::ListItems::SORT_DIRECTIONS) || Vault::ListItems::DEFAULT_DIRECTION
     safe_query = listing_query_params(filters, @filter_token)
+    if @filter_token.blank? && filters["status"].to_s.in?(%w[archived all])
+      safe_query[:status] = filters["status"]
+    end
+    @sort_base_params = safe_query
+    sort_query = safe_query.merge(sort: @sort, direction: @direction)
     result = Vault::ListItems.call(
       user: Current.user,
       q: filters["q"],
@@ -170,17 +236,19 @@ class VaultItemsController < ApplicationController
       status: filters["status"],
       favorite: filters["favorite"],
       tag: filters["tag"],
-      page: params[:page],
+      page: requested_page,
+      sort: @sort,
+      direction: @direction,
       # Pagy links are always GET index URLs with known-safe parameters,
       # regardless of whether the listing was rendered by POST or GET.
-      request: { base_url: request.base_url, path: vault_items_path, params: safe_query.stringify_keys }
+      request: { base_url: request.base_url, path: vault_items_path, params: sort_query.stringify_keys }
     )
     @summaries = result.summaries
     @pagy = result.pagy
     @page = result.page
     @total = result.total
     @total_pages = result.total_pages
-    @vault_listing_url = vault_items_path(**safe_query.merge(page: @page))
+    @vault_listing_url = vault_items_path(**sort_query.merge(page: @page))
     @query = filters["q"].to_s
     @kind_filter = filters["kind"].to_s.presence_in(VaultItem::KINDS)
     @status_filter = filters["status"].to_s.presence_in(%w[active archived all]) || "active"

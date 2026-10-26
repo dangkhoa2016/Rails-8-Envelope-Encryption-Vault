@@ -94,6 +94,11 @@ class VaultCategoryGuidanceTest < ApplicationSystemTestCase
     click_button "Search"
 
     assert_equal true, evaluate_script("window.__vaultNoReload")
+    # The initial listing already says "Page 1 of 2". Wait for the Turbo
+    # replacement's Stimulus controller to push its opaque GET URL before
+    # reading page.current_url (a plain read does not wait for async updates).
+    assert_current_path(/(?:\?|&)page=1(?:&|$)/, ignore_query: false)
+    assert_current_path(/(?:\?|&)filter=[0-9a-f]{32}(?:&|$)/, ignore_query: false)
     assert_text "Page 1 of 2"
     assert_equal "/vault_items", URI.parse(page.current_url).path
     current_params = Rack::Utils.parse_nested_query(URI.parse(page.current_url).query)
@@ -106,6 +111,7 @@ class VaultCategoryGuidanceTest < ApplicationSystemTestCase
     assert_no_text "Paging sample 01"
     assert_selector "nav[aria-label='Vault pagination'] a[rel='next'][href*='page=2']", count: 1
     click_link "Next"
+    assert_current_path(/(?:\?|&)page=2(?:&|$)/, ignore_query: false)
     assert_text "Page 2 of 2"
     next_params = Rack::Utils.parse_nested_query(URI.parse(page.current_url).query)
     assert_equal "2", next_params.fetch("page")
@@ -118,6 +124,7 @@ class VaultCategoryGuidanceTest < ApplicationSystemTestCase
     refute_includes page.current_url, "Paging"
     assert_selector "nav[aria-label='Vault pagination'] a[rel='prev'][href*='page=1']", count: 1
     click_link "Previous"
+    assert_current_path(/(?:\?|&)page=1(?:&|$)/, ignore_query: false)
     assert_text "Page 1 of 2"
     assert_equal current_params.fetch("filter"), Rack::Utils.parse_nested_query(URI.parse(page.current_url).query).fetch("filter")
     assert_text "Paging sample 08"
@@ -127,6 +134,79 @@ class VaultCategoryGuidanceTest < ApplicationSystemTestCase
     assert_current_path vault_items_path
     assert_no_text "Filters active"
     assert_field "Search encrypted titles", with: ""
+  end
+
+  test "sortable Vault table starts Favorite descending, toggles headers, and preserves pagy links" do
+    user = create_system_user("vault-column-sort@example.test")
+    sign_in_system_user(user)
+    13.times do |index|
+      item = Vault::CreateItem.call(user:, kind: "login", payload: {
+        "schema" => "vault.login.v1", "title" => format("Sort sample %02d", index + 1),
+        "username" => "synthetic@example.test", "password" => "fake-demo-only",
+        "url" => "https://example.test", "notes" => "", "tags" => %w[demo]
+      })
+      item.update_columns(updated_at: Time.current + (index + 1).minutes)
+    end
+
+    visit vault_items_path
+    assert_selector "[data-vault-sort-status]", text: "Favorite ↓ Descending"
+    assert_selector '[role="columnheader"][aria-sort="descending"] a[href*="sort=favorite"]'
+    assert_selector '[role="columnheader"][aria-sort="none"] a[href*="sort=item"]'
+
+    find('[role="columnheader"][aria-sort="none"] a[href*="sort=item"]').click
+    assert_selector "[data-vault-sort-status]", text: "Item ↑ Ascending"
+    assert_text "Sort sample 01"
+    assert_no_text "Sort sample 13"
+    assert_selector "nav[aria-label='Vault pagination'] a[rel='next'][href*='sort=item']"
+    click_link "Next"
+    assert_text "Page 2 of 3"
+    assert_equal "item", Rack::Utils.parse_nested_query(URI.parse(page.current_url).query)["sort"]
+    assert_equal "asc", Rack::Utils.parse_nested_query(URI.parse(page.current_url).query)["direction"]
+    find('[role="columnheader"][aria-sort="ascending"] a[href*="sort=item"]').click
+    assert_text "Page 1 of 3"
+    assert_selector "[data-vault-sort-status]", text: "Item ↓ Descending"
+    assert_text "Sort sample 13"
+
+    find('[role="columnheader"] a[href*="sort=updated"]').click
+    assert_selector "[data-vault-sort-status]", text: "Updated ↓ Descending"
+    assert_text "Sort sample 13"
+    find('[role="columnheader"] a[href*="sort=updated"]').click
+    assert_selector "[data-vault-sort-status]", text: "Updated ↑ Ascending"
+    assert_text "Sort sample 01"
+  end
+
+  test "sort changes retain private search filters without exposing query text in links" do
+    user = create_system_user("vault-sort-private-filter@example.test")
+    sign_in_system_user(user)
+    9.times do |index|
+      Vault::CreateItem.call(user:, kind: "login", payload: {
+        "schema" => "vault.login.v1", "title" => format("Encrypted sorting %02d", index + 1),
+        "username" => "synthetic@example.test", "password" => "demo-only",
+        "url" => "https://example.test", "notes" => "", "tags" => %w[private-tag]
+      })
+    end
+    visit vault_items_path
+    fill_in "Search encrypted titles", with: "Encrypted sorting"
+    click_button "Search"
+    assert_text "Filters active"
+    assert_text "Page 1 of 2"
+    assert_selector 'a[href*="sort=item"][href*="filter="]'
+    assert_current_path(/filter=[0-9a-f]{32}/, ignore_query: false)
+    old_params = Rack::Utils.parse_nested_query(URI.parse(page.current_url).query)
+    find('[role="columnheader"][aria-sort="none"] a[href*="sort=item"]').click
+    assert_selector "[data-vault-sort-status]", text: "Item ↑ Ascending"
+    assert_current_path(/sort=item/, ignore_query: false)
+    sort_params = Rack::Utils.parse_nested_query(URI.parse(page.current_url).query)
+    assert_equal old_params.fetch("filter"), sort_params.fetch("filter")
+    assert_equal "item", sort_params.fetch("sort")
+    assert_equal "asc", sort_params.fetch("direction")
+    assert_text "Page 1 of 2"
+    assert_field "Search encrypted titles", with: "Encrypted sorting"
+    refute_includes page.current_url, "Encrypted sorting"
+    refute_includes page.current_url, "private-tag"
+    click_link "Next"
+    assert_text "Page 2 of 2"
+    assert_equal old_params.fetch("filter"), Rack::Utils.parse_nested_query(URI.parse(page.current_url).query).fetch("filter")
   end
 
   test "browser back and forward restore a Vault search URL and its private filters" do
