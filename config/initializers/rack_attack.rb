@@ -38,6 +38,16 @@ class Rack::Attack
     req.ip unless %w[/up /ready].include?(req.path)
   end
 
+  # This shared-identity recovery endpoint signs out ALL demo visitors. Limit
+  # reset storms even if adversaries rotate IP addresses (demo is single-user).
+  throttle("public_demo_reset/global", limit: 4, period: 60.seconds) do |req|
+    "public-demo" if req.path == "/demo_access_reset" && req.post?
+  end
+
+  throttle("public_demo_reset/ip", limit: 2, period: 60.seconds) do |req|
+    req.ip if req.path == "/demo_access_reset" && req.post?
+  end
+
   throttle("login/ip", limit: 5, period: 60.seconds) do |req|
     req.ip if req.path == "/session" && req.post?
   end

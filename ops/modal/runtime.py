@@ -147,14 +147,14 @@ def start_web(mode):
         password_path = write_secret_file(
             "/dev/shm/revault-demo/demo-password", os.environ["DEMO_PASSWORD"].encode()
         )
-        env.update({"SHOW_PUBLIC_DEMO_CREDENTIALS": "true", "DEMO_PASSWORD_FILE": password_path,
+        env.update({"SHOW_PUBLIC_DEMO_CREDENTIALS": "true", "PUBLIC_DEMO_RESET_ENABLED": "true", "DEMO_PASSWORD_FILE": password_path,
                     "DEMO_EMAIL": "showcase@example.test", "DEMO_RESET": "false"})
         rails(["db:prepare"], env, "DEMO_DB_PREPARE_FAILED")
         rails(["demo:fixture"], env, "DEMO_FIXTURE_FAILED")
         print("MODAL_DATABASE=EPHEMERAL_POSTGRES")
         print("MODAL_CONTENT=SYNTHETIC_ONLY")
     else:
-        for variable in ("DEMO_PASSWORD", "DEMO_EMAIL", "DEMO_RESET", "DEMO_PASSWORD_FILE", "SHOW_PUBLIC_DEMO_CREDENTIALS"):
+        for variable in ("DEMO_PASSWORD", "DEMO_EMAIL", "DEMO_RESET", "DEMO_PASSWORD_FILE", "SHOW_PUBLIC_DEMO_CREDENTIALS", "PUBLIC_DEMO_RESET_ENABLED"):
             env.pop(variable, None)
         # The persistent database must already exist. Never seed a demo account.
         rails(["db:migrate"], env, "PRIVATE_DB_MIGRATION_FAILED")

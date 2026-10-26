@@ -5,6 +5,7 @@ class AuditEventPresenter
     "user.login_failed" => [ "Sign-in failed", "A sign-in attempt was rejected." ],
     "user.logout" => [ "Signed out", "A vault session was signed out." ],
     "user.password_changed" => [ "Password changed", "Your account password was changed and other sessions were revoked." ],
+    "user.public_demo_access_reset" => [ "Demo access restored", "Shared demo sign-in and MFA were restored; all demo sessions were signed out." ],
     "user.reauthenticated" => [ "Identity confirmed", "Recent identity verification succeeded for a sensitive action." ],
     "user.reauthentication_failed" => [ "Identity confirmation failed", "A recent identity verification attempt was rejected." ],
     "user.mfa_enabled" => [ "MFA enabled", "Two-factor authentication was enabled." ],
@@ -64,7 +65,7 @@ class AuditEventPresenter
 
 
   CATEGORIES = {
-    "Account" => %w[user.registered user.password_changed],
+    "Account" => %w[user.registered user.password_changed user.public_demo_access_reset],
     "Sessions" => %w[user.login_succeeded user.login_failed user.logout user.reauthenticated user.reauthentication_failed],
     "MFA" => %w[user.mfa_enabled user.mfa_disabled user.mfa_failed user.mfa_recovery_codes_regenerated],
     "Vault" => %w[
@@ -88,7 +89,7 @@ class AuditEventPresenter
   ].freeze
   RECORDED_ACTIONS = %w[key.rotation_started].freeze
   SENSITIVE_ACTIONS = %w[
-    user.password_changed user.mfa_enabled user.mfa_disabled
+    user.password_changed user.public_demo_access_reset user.mfa_enabled user.mfa_disabled
     user.mfa_recovery_codes_regenerated vault_item.revealed
     vault_item.exported vault_item.restored key.rotation_started
     key.rotation_completed key.rotation_failed
