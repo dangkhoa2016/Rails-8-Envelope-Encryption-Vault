@@ -29,6 +29,7 @@
 
 - [Notebook](KAGGLE-SETUP.vi.md): bootstrap Kaggle/Colab tạm thời dùng dữ liệu giả.
 - [Triển khai](deployment.vi.md): tách môi trường, tiền kiểm và nghiệm thu host riêng.
+- [Modal hai chế độ](MODAL-DEPLOYMENT.vi.md): demo công khai không lưu dữ liệu và vault cá nhân dùng PostgreSQL ngoài.
 - [Checklist production](PRODUCTION-CHECKLIST.vi.md): biện pháp bảo vệ trước go-live.
 - [Backup/restore](BACKUP-RESTORE.vi.md): dump mã hóa age, checksum, restore và canary.
 - [Nguồn gốc phục hồi](RECOVERY-PROVENANCE.vi.md): yêu cầu đối với bằng chứng phục hồi.
