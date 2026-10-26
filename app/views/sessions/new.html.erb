@@ -9,6 +9,13 @@
         <p class="mt-2">Email: <code><%= ENV.fetch("DEMO_EMAIL") %></code></p>
         <p>Password: <code><%= ENV.fetch("DEMO_PASSWORD") %></code></p>
         <p class="mt-2 text-xs">This account is shared. Changes may be lost when the demo restarts. Never enter real credentials.</p>
+        <% if Demo::AccessReset.enabled? %>
+          <%= button_to "Reset demo password & MFA", demo_access_reset_path,
+                method: :post,
+                class: "mt-3 w-full cursor-pointer rounded-lg border border-amber-200/40 px-3 py-2 text-sm font-semibold text-amber-50 transition hover:bg-amber-200/10 focus-visible:ring-2 focus-visible:ring-amber-300",
+                data: { turbo_confirm: "Reset the shared demo password and MFA? All visitors will be signed out." } %>
+          <p class="mt-2 text-xs">If another tester changed the password or enabled MFA, use this button to restore sign-in. It signs out everyone.</p>
+        <% end %>
       </div>
     <% end %>
     <%= form_with url: session_path, class: "mt-7 space-y-5" do |form| %>

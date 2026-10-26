@@ -1,5 +1,6 @@
 Rails.application.routes.draw do
   resource :session, only: %i[new create destroy]
+  resource :demo_access_reset, only: :create
   resource :registration, only: %i[new create]
   resource :mfa_challenge, only: %i[new create]
   resource :reauthentication, only: %i[new create]

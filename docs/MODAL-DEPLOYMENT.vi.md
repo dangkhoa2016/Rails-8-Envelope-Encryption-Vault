@@ -42,6 +42,12 @@ Không dùng chung KEK giữa staging/demo/private. KEK của vault cá nhân ph
 
 `APP_HOSTS` phải chứa hostname đúng với endpoint Modal hoặc domain riêng. Lần đầu có thể deploy để nhận URL, sau đó cập nhật Secret theo hostname và deploy lại. Không tắt Rails Host Authorization hoặc CSRF để khắc phục cấu hình hostname sai.
 
+## Khôi phục quyền đăng nhập demo bất kỳ lúc nào
+
+Khách dùng chung một tài khoản nên có thể đổi mật khẩu, bật MFA hoặc dùng hết recovery codes. Trang đăng nhập demo có nút **Reset demo password & MFA**. Thao tác POST có CSRF token sẽ khôi phục mật khẩu mẫu đã cấu hình, xóa TOTP đã bật/đang cài đặt và toàn bộ recovery codes của tài khoản demo, đồng thời thu hồi mọi phiên của tài khoản đó. **Không xóa Vault Item dữ liệu giả.** Reset có giới hạn theo IP và toàn cục; những khách đang dùng sẽ phải đăng nhập lại. Container mới cũng tự tạo tài khoản demo ban đầu.
+
+Chức năng chỉ bật nếu `DEMO_MODE=true`, `SHOW_PUBLIC_DEMO_CREDENTIALS=true`, `PUBLIC_DEMO_RESET_ENABLED=true`, tài khoản giả cố định, không cho đăng ký và `REQUIRE_MFA=false`. Bộ khởi động demo bật nó; bộ khởi động private xóa các biến liên quan và đường dẫn reset luôn trả HTTP 404. Tuyệt đối không dùng endpoint này để phục hồi tài khoản vault cá nhân.
+
 ## Lệnh deploy
 
 Chạy trong thư mục gốc repository đã kiểm toán:

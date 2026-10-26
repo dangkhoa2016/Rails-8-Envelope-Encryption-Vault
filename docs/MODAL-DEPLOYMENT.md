@@ -42,6 +42,12 @@ These keys **must never be shared** across demo, staging, and private environmen
 
 `APP_HOSTS` must match the exact Modal-generated hostname or private domain. For initial setup, obtain the generated endpoint from `modal deploy`; if the host changes, update the relevant Secret and redeploy. Never disable Rails host or CSRF protection to work around an incorrect hostname.
 
+## Recover the public demo login at any time
+
+Visitors can change the shared demo password, enroll MFA, or consume recovery codes. To avoid locking out the next reviewer, the public sign-in page provides **Reset demo password & MFA**. This CSRF-protected POST action restores the configured demo password, deletes the demo account's enabled/pending TOTP setting and recovery codes, and revokes every session of that account. The action **does not erase synthetic Vault items**. It is rate-limited per IP and globally to reduce reset storms; any reset signs out other visitors. A fresh ephemeral container also recreates the demo baseline.
+
+The reset is gated by `DEMO_MODE=true`, `SHOW_PUBLIC_DEMO_CREDENTIALS=true`, `PUBLIC_DEMO_RESET_ENABLED=true`, a fixed synthetic account, no registrations, and `REQUIRE_MFA=false`. The Modal demo bootstrap enables this feature; private bootstrap removes all corresponding demo variables and the same reset URL returns HTTP 404. Never publish private account recovery through this endpoint.
+
 ## Deploy
 
 From the reviewed repo root, after installing and authenticating the Modal CLI:
