@@ -86,7 +86,7 @@
     <% end %>
   </section>
 
-  <section aria-label="Audit timeline">
+  <section id="audit_timeline" tabindex="-1" class="scroll-mt-24" aria-label="Audit timeline">
     <div class="flex flex-wrap items-baseline justify-between gap-2">
       <h2 class="text-lg font-semibold text-white">Activity timeline</h2>
       <p class="text-xs text-slate-500">Times use the application time zone · newest first</p>
@@ -155,7 +155,7 @@
           </section>
         <% end %>
       </div>
-      <%= render "shared/pagination", pagy: @pagy, label: "Audit pagination" if @total_pages > 1 %>
+      <%= render "shared/pagination", pagy: @pagy, label: "Audit pagination", scroll_target: "audit_timeline" if @total_pages > 1 %>
     <% end %>
   </section>
 </div>

@@ -1,4 +1,4 @@
-<section id="vault_listing" data-controller="vault-search" data-vault-search-updated-value="<%= @async_search.present? %>" data-vault-search-list-url-value="<%= @vault_listing_url %>">
+<section id="vault_listing" class="scroll-mt-24" tabindex="-1" data-controller="vault-search" data-vault-search-updated-value="<%= @async_search.present? %>" data-vault-search-list-url-value="<%= @vault_listing_url %>">
   <% filters_active = @query.present? || @kind_filter.present? || @status_filter != "active" || @favorite_filter || @tag_filter.present? %>
   <div class="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
     <div>
@@ -115,7 +115,7 @@
       </div>
     </div>
 
-    <%= render "shared/pagination", pagy: @pagy, label: "Vault pagination" if @total_pages > 1 %>
+    <%= render "shared/pagination", pagy: @pagy, label: "Vault pagination", scroll_target: "vault_listing" if @total_pages > 1 %>
   <% end %>
   <% unless @vault_empty %>
     <div class="mt-7 flex justify-end">
