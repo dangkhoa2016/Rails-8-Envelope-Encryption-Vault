@@ -21,7 +21,7 @@ Verify vẫn chạy **toàn bộ bộ test** sau khi website đã mở; việc c
 
 1. Import [notebook chính thức](../notebooks/Rails_8_Envelope_Encryption_Vault_Kaggle_Colab_Demo.ipynb) vào **Kaggle CPU** (bật Internet) hoặc **Google Colab CPU**. Cần Linux runtime có quyền cài package và vài GB dung lượng trống.
 2. Để **DEMO_EXPERIENCE = "explore"** (mặc định), hoặc chọn **"verify"** nếu muốn chạy kiểm thử và xuất evidence đầy đủ. Giữ **ENABLE_CLOUDFLARE_TUNNEL = True** chỉ nếu bạn chấp nhận một trang đăng nhập tạm có thể truy cập công khai. Đặt False để chỉ dùng localhost.
-3. Notebook clone mã nguồn đã được review ẩn danh từ GitHub chính thức, không yêu cầu GitHub token hoặc Kaggle/Colab Secret. Không đưa thông tin đăng nhập vào code cell hoặc Git URL.
+3. Notebook tự động tải mã nguồn bản phát hành từ GitHub; **không cần GitHub token hay Kaggle/Colab Secret**.
 4. Chạy **Run All**. Các bước đầu cài môi trường, xác minh mã nguồn, chuẩn bị database riêng, tạo account mẫu. Khi Rails/PostgreSQL sẵn sàng, cell trình duyệt hiện liên kết **Open Rails 8 Envelope Encryption Vault**.
 5. Mở liên kết, đăng nhập email **showcase@example.test**, dùng **mật khẩu ngẫu nhiên trong output riêng tư tại Bước 4**. Trải nghiệm Search, phân trang, Favorites, Archive, phiên bản và Security Activity.
 6. Với Verify, xem thêm Rails/Selenium tests, gallery và evidence. Khi xong, bấm **Stop Rails 8 Envelope Encryption Vault** ở cell cuối; Run All **không tự đóng website**. Nếu widget không hỗ trợ, đặt **STOP_DEMO_NOW = True** và chạy riêng cell cuối.

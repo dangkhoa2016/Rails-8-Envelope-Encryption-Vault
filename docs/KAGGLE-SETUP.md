@@ -21,7 +21,7 @@ Full Rails/Selenium tests are retained in Verify, **after the site becomes acces
 
 1. Import the [canonical notebook](../notebooks/Rails_8_Envelope_Encryption_Vault_Kaggle_Colab_Demo.ipynb) into a **Kaggle CPU** notebook (Internet enabled) or **Google Colab CPU**. Use a Linux runtime with installation permissions and several gigabytes of free disk space.
 2. Set **DEMO_EXPERIENCE = "explore"** (default), or **"verify"** for the full test and evidence workflow. Keep **ENABLE_CLOUDFLARE_TUNNEL = True** only if you accept a *publicly reachable temporary login page*. Set False for local-only access.
-3. The notebook clones the reviewed source anonymously from the official GitHub repository. No GitHub access token or Kaggle/Colab Secret is required. Never paste credentials into code cells or Git URLs.
+3. The notebook automatically clones the release source from GitHub; **no GitHub token or Kaggle/Colab Secret is required**.
 4. Run **Run All**. The first steps install dependencies, verify source integrity, prepare an isolated demo database and generate a disposable account. The browser cell displays **Open Rails 8 Envelope Encryption Vault** after Rails and PostgreSQL readiness checks.
 5. Open the URL and sign in as **showcase@example.test**, using the **private random password printed in Step 4**. Try Search, pagination, Favorites, Archive, immutable versions and Security Activity.
 6. In Verify, inspect the full Rails/Selenium results and optional screenshot gallery and artifact. Use the **Stop Rails 8 Envelope Encryption Vault** button in the last cell when finished; Run All does **not** stop the app automatically. If widget buttons are unavailable, set **STOP_DEMO_NOW = True** and run the last cell alone.

@@ -256,10 +256,9 @@ class RecoveryContractTest < ActiveSupport::TestCase
   test "showcase builder packages current public documentation" do
     builder = Rails.root.join("script/build-public-showcase").read
     validator = Rails.root.join("script/public-showcase-validate").read
-    assert_includes builder, "ARCHITECTURE.md"
-    assert_includes builder, "ACCESSIBILITY.md"
-    assert_includes builder, "PUBLICATION-STATUS.md"
-    assert_includes builder, "PUBLICATION-STATUS.md"
+    assert_includes builder, '"$ROOT"/docs/*.md'
+    assert_includes builder, 'cp "$f" "$STAGE/docs/"'
+    refute_includes builder, "PUBLICATION-STATUS.md"
     assert_includes validator, "expected 10 screenshots"
   end
 
@@ -293,9 +292,10 @@ class RecoveryContractTest < ActiveSupport::TestCase
     builder = Rails.root.join("script/build-public-showcase").read
     validator = Rails.root.join("script/public-showcase-validate").read
     assert_includes builder, "script/public-showcase-validate"
-    %w[ARCHITECTURE.md ACCESSIBILITY.md PUBLICATION-STATUS.md].each do |doc|
-      assert_includes builder, doc
-    end
+    assert_includes builder, '"$ROOT"/docs/*.md'
+    assert_includes builder, 'cp "$f" "$STAGE/docs/"'
+    assert_includes builder, 'sha256sum "$(basename "$ARCHIVE")"'
+    refute_includes builder, "PUBLICATION-STATUS.md"
     refute_includes builder, "FIX25-RELEASE-NOTES"
     assert_includes validator, "PUBLIC_SHOWCASE_VALIDATE=PASS"
     assert_includes validator, "expected 10 screenshots"

@@ -71,6 +71,8 @@ required = {
 for meaning, snippet in required.items():
     if snippet not in body:
         errors.append('Missing contract: '+meaning)
+if any(token in body for token in ('GH_READ_TOKEN', 'GIT_ASKPASS', 'read_github_token')):
+    errors.append('Obsolete credential-gated clone flow remains in public release notebook')
 for legacy in ('EXPECTED_SOURCE_COMMIT', 'EXPECTED_SOURCE_TREE',
                'PINNED_MAIN_COMMIT', 'RELEASE_DOCUMENT_PATHS',
                'RELEASE_EXECUTABLE_DRIFT', '7f58d38c8578', 'bcea98b41ff3'):
