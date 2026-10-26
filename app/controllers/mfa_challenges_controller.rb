@@ -3,6 +3,7 @@ class MfaChallengesController < ApplicationController
 
   def new
     @pending_user = require_pending_user!
+    @code_method = params[:method] == "recovery" ? "recovery" : "authenticator"
     nil unless @pending_user
   end
 
@@ -21,7 +22,10 @@ class MfaChallengesController < ApplicationController
       redirect_to destination.presence || root_path
     else
       AuditEvent.create!(user: user, action: "user.mfa_failed", metadata: {})
-      redirect_to new_mfa_challenge_path, alert: "Invalid authentication code."
+      # The verification token is never echoed back into the response or URL.
+      # Preserve only the selected UI method after a failed recovery attempt.
+      method = params[:code_method] == "recovery" ? "recovery" : "authenticator"
+      redirect_to new_mfa_challenge_path(method: method), alert: "Invalid authentication code."
     end
   rescue Crypto::Error, ArgumentError
     reset_session
