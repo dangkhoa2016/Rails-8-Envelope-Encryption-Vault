@@ -22,7 +22,7 @@ gem "solid_cache"
 gem "bootsnap", require: false
 gem "kamal", require: false
 # Avoid vulnerable net-ssh versions pulled in transitively by Kamal/SSHKit.
-gem "net-ssh", "~> 7.3", ">= 7.3.6", require: false
+gem "net-ssh", "~> 7.3", require: false
 gem "thruster", require: false
 
 group :development, :test do
