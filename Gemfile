@@ -31,7 +31,7 @@ group :development, :test do
   gem "bundler-audit", require: false
   gem "rubocop-rails-omakase", require: false
   gem "capybara", "~> 3.40"
-  gem "selenium-webdriver", "~> 4.49"
+  gem "selenium-webdriver", "~> 4.51"
 end
 
 group :development do
